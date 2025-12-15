@@ -22,20 +22,20 @@ class Settings(BaseSettings):
     neo4j_user: str = Field(default="neo4j", env="NEO4J_USER")
     neo4j_password: str = Field(default="password", env="NEO4J_PASSWORD")
 
-    # LLM settings
-    llm_provider: str = Field(default="ollama", env="LLM_PROVIDER")  # "ollama", "groq", or "gemini"
-    # Only keep Ollama and Groq (and optionally Gemini/Google)
+    # LLM settings - Groq is now the default (fast online inference)
+    llm_provider: str = Field(default="groq", env="LLM_PROVIDER")  # "groq", "ollama", or "gemini"
+    
+    # Groq API (primary - fast online inference with llama-3.3-70b-versatile)
+    groq_api_key: str = Field(default="", env="GROQ_API_KEY")
+    groq_model: str = Field(default="llama-3.3-70b-versatile", env="GROQ_MODEL")
+
+    # Ollama (fallback - local inference, requires model pulling)
     ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="llama3", env="OLLAMA_MODEL")
 
-    groq_api_key: str = Field(default="", env="GROQ_API_KEY")
-    groq_model: str = Field(default="mixtral-8x7b-32768", env="GROQ_MODEL")
-
-    # Gemini/Google
+    # Gemini/Google (alternative)
     google_api_key: str = Field(default="", env="GOOGLE_API_KEY")
     gemini_model: str = Field(default="gemini-pro", env="GEMINI_MODEL")
-
-    # Removed OpenAI and Anthropic keys/settings
 
     # Document processing settings
     max_file_size_mb: int = Field(default=10)

@@ -5,8 +5,8 @@ import hashlib
 import time
 import threading
 from .neo4j_service import Neo4jService
-from langchain.prompts import PromptTemplate
-from langchain.schema.runnable import RunnablePassthrough
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 from app.services.llm_factory import get_llm
 
 # Configure logging
@@ -218,13 +218,16 @@ def query_knowledge_graph(query: str, neo4j_service: Neo4jService, graph_id: str
                 
                 if nodes_to_process:
                     for node_id in nodes_to_process:
-                        # OPTIMIZED: Simplified query to get faster results
+                        # Query to get both incoming and outgoing relationships
                         node_info_cypher = """
                         MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node {id: $node_id})
-                        OPTIONAL MATCH (n)-[r]-(related)
-                        WHERE related.label IS NOT NULL
+                        OPTIONAL MATCH (n)-[r_out]->(related_out)
+                        WHERE related_out.label IS NOT NULL
+                        OPTIONAL MATCH (related_in)-[r_in]->(n)
+                        WHERE related_in.label IS NOT NULL
                         RETURN n.label AS label, labels(n) AS types, 
-                               collect(DISTINCT type(r) + ' -> ' + related.label)[..5] AS relationships
+                               collect(DISTINCT 'this -' + type(r_out) + '-> ' + related_out.label)[..5] AS outgoing,
+                               collect(DISTINCT related_in.label + ' -' + type(r_in) + '-> this')[..5] AS incoming
                         LIMIT 1
                         """
                         
@@ -239,10 +242,15 @@ def query_knowledge_graph(query: str, neo4j_service: Neo4jService, graph_id: str
                             node_type = next((t for t in info["types"] if t != "Node"), "Entity")
                             context += f"Node: {info['label']} (Type: {node_type})\n"
                             
-                            # Add relationships
-                            relationships = info["relationships"]
-                            if relationships and relationships[0]:
-                                context += f"Relationships: {', '.join(relationships[:5])}\n"
+                            # Add outgoing relationships
+                            outgoing = info.get("outgoing", [])
+                            if outgoing and outgoing[0]:
+                                context += f"Outgoing: {', '.join([r for r in outgoing if r])}\n"
+                            
+                            # Add incoming relationships  
+                            incoming = info.get("incoming", [])
+                            if incoming and incoming[0]:
+                                context += f"Incoming: {', '.join([r for r in incoming if r])}\n"
                             
                             context += "\n"
                 
@@ -333,20 +341,13 @@ def query_knowledge_graph(query: str, neo4j_service: Neo4jService, graph_id: str
         # Generate answer using LLM
         llm_start_time = time.time()
         try:
-            # First attempt with pipe syntax
-            response = rag_chain.invoke({"question": query, "context": context})
-            logger.info("Generated response using pipe syntax")
-        except Exception as chain_err:
-            logger.error(f"Error with pipe syntax: {chain_err}")
-            try:
-                # Fall back to the older run method
-                from langchain.chains import LLMChain
-                fallback_chain = LLMChain(llm=llm, prompt=rag_prompt)
-                response = fallback_chain.run(question=query, context=context)
-                logger.info("Generated response using LLMChain fallback")
-            except Exception as run_err:
-                logger.error(f"Error with run method: {run_err}")
-                response = f"Error generating response: {str(run_err)}"
+            # Format the prompt directly and call LLM
+            formatted_prompt = RAG_TEMPLATE.format(question=query, context=context)
+            response = llm.invoke(formatted_prompt)
+            logger.info("Generated response using direct LLM call")
+        except Exception as llm_err:
+            logger.error(f"Error calling LLM: {llm_err}")
+            response = f"Error generating response: {str(llm_err)}"
         
         logger.info(f"LLM response generated in {time.time() - llm_start_time:.2f}s")
         

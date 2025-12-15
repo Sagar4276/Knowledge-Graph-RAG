@@ -20,7 +20,19 @@ ENTITY_TYPES = [
     "Product", 
     "Date",
     "Document",
-    "Technology"
+    "Technology",
+    # Network Security Entity Types
+    "IPAddress",
+    "InternalIP",
+    "ExternalIP",
+    "Port",
+    "Protocol",
+    "Service",
+    "Device",
+    "Domain",
+    "Vulnerability",
+    "Threat",
+    "Attack",
 ]
 
 RELATION_TYPES = [
@@ -49,7 +61,19 @@ RELATION_TYPES = [
     "RELEASED_ON",
     "OCCURRED_ON",
     "USES_TECHNOLOGY",
-    "ACQUIRED"
+    "ACQUIRED",
+    # Network Security Relationship Types
+    "CONNECTED_TO",
+    "USES_PORT",
+    "RESOLVES_TO",
+    "LOGGED_IN",
+    "RUNS_SERVICE",
+    "TRANSFERRED_TO",
+    "FLAGGED_AS",
+    "SCANNED",
+    "ATTACKED",
+    "EXPLOITS",
+    "TARGETS",
 ]
 
 # Semantic relationship mapping for normalization
@@ -234,6 +258,7 @@ Return ONLY a valid JSON object with this exact structure:
             logger.info(f"LLM response length: {len(content)} characters")
             
             result = self._extract_json_from_response(content)
+            logger.info(f"Extracted JSON result: {result}")
             
             # Validate the structure
             if not isinstance(result, dict):
@@ -275,41 +300,47 @@ def validate_graph_data(graph_data: Dict[str, Any]) -> Dict[str, Any]:
     nodes = graph_data.get("nodes", [])
     relationships = graph_data.get("relationships", graph_data.get("edges", []))
     
-    # Validate nodes
+    # Validate nodes - ALWAYS generate unique UUIDs to avoid conflicts
     node_ids = set()
+    old_to_new_id_map = {}  # Map old IDs to new UUIDs for relationships
+    
     for node in nodes:
         if not isinstance(node, dict):
             continue
+        
+        old_id = node.get("id", "")
+        # ALWAYS generate a new unique UUID for each node
+        new_id = str(uuid.uuid4())
+        
+        # Map old ID to new ID for relationship resolution
+        if old_id:
+            old_to_new_id_map[str(old_id)] = new_id
             
-        node_id = node.get("id")
-        if not node_id:
-            node_id = str(uuid.uuid4())
-            
-        # Avoid duplicate node IDs
-        if node_id in node_ids:
-            node_id = f"{node_id}_{uuid.uuid4().hex[:8]}"
-            
-        node_ids.add(node_id)
+        node_ids.add(new_id)
         
         validated_data["nodes"].append({
             "data": {
-                "id": node_id,
+                "id": new_id,
                 "label": node.get("label", f"Entity {len(validated_data['nodes']) + 1}"),
                 "type": node.get("type", "Entity"),
                 "properties": node.get("properties", {})
             }
         })
     
-    # Validate relationships
+    # Validate relationships - use the ID mapping
     for rel in relationships:
         if not isinstance(rel, dict):
             continue
             
-        source_id = rel.get("source")
-        target_id = rel.get("target")
+        old_source_id = str(rel.get("source", ""))
+        old_target_id = str(rel.get("target", ""))
+        
+        # Map old IDs to new UUIDs
+        source_id = old_to_new_id_map.get(old_source_id)
+        target_id = old_to_new_id_map.get(old_target_id)
         
         # Only add relationship if both source and target exist
-        if source_id in node_ids and target_id in node_ids:
+        if source_id and target_id:
             rel_type = rel.get("type", "RELATED_TO")
             
             validated_data["edges"].append({
@@ -346,9 +377,9 @@ def extract_knowledge_graph(text: str) -> Dict[str, Any]:
     try:
         logger.info("Starting knowledge graph extraction")
         
-        # Create transformer and extract graph
         transformer = get_graph_transformer()
         raw_graph = transformer.transform(text)
+        logger.info(f"Raw graph from transformer: nodes={len(raw_graph.get('nodes', []))}, relationships={len(raw_graph.get('relationships', []))}")
         
         # Validate and clean the extracted graph
         processed_graph = validate_graph_data(raw_graph)

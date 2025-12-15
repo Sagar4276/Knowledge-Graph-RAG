@@ -1,0 +1,86 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+docs/
+*.md
+!requirements.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# ========================
+# DATASETS - EXCLUDE FROM BUILD
+# ========================
+backend/sample_data/*.csv
+backend/sample_data/*.json
+sample_data/*.csv
+sample_data/*.json
+
+# Test files
+**/test_*.py
+backend/tests/
+tests/
+
+# Neo4j data
+neo4j_data/
+data/
+
+# Temporary
+*.tmp
+*.temp
+*.bak
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+docker/
+!docker/backend.Dockerfile
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml

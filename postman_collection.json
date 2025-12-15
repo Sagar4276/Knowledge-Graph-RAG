@@ -1,0 +1,273 @@
+{
+    "info": {
+        "name": "Network Security Graph RAG",
+        "description": "API collection for Network Security Analysis with Knowledge Graphs and RAG",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:8000",
+            "type": "string"
+        },
+        {
+            "key": "graph_id",
+            "value": "network_security",
+            "type": "string"
+        }
+    ],
+    "item": [
+        {
+            "name": "Health",
+            "item": [
+                {
+                    "name": "Health Check",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/health"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Network Security",
+            "item": [
+                {
+                    "name": "Upload CSV",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/network/upload-csv",
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": ""
+                                },
+                                {
+                                    "key": "max_rows",
+                                    "value": "5000",
+                                    "type": "text"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "List Graphs",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/graphs"
+                    }
+                },
+                {
+                    "name": "Analyze Graph",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/analyze/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "Security Summary",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/summary/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "Get Anomalies",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/anomalies/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "Network Stats",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/stats/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "Get IP Connections",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/connections/192.168.1.10",
+                        "query": [
+                            {
+                                "key": "graph_id",
+                                "value": "{{graph_id}}"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "name": "Ingest Network Logs",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/network/ingest",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"logs\": [\n    {\n      \"timestamp\": \"2024-01-15 10:30:00\",\n      \"source_ip\": \"192.168.1.100\",\n      \"dest_ip\": \"8.8.8.8\",\n      \"dest_port\": 443,\n      \"protocol\": \"TCP\",\n      \"bytes_sent\": 1500,\n      \"bytes_received\": 3000,\n      \"action\": \"allow\"\n    }\n  ]\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Detect Port Scan",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/network/port-scan",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"logs\": []\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Detect Data Exfiltration",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/network/exfiltration",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"logs\": []\n}"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "RAG Query",
+            "item": [
+                {
+                    "name": "Query Graph (Natural Language)",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"What attacks were detected?\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Graph Operations",
+            "item": [
+                {
+                    "name": "List All Graphs",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/graphs"
+                    }
+                },
+                {
+                    "name": "Get Graph by ID",
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/graphs/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "Filter Graph",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/graphs/{{graph_id}}/filter",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"node_types\": [\"ExternalIP\", \"AttackType\"],\n  \"search_term\": \"\"\n}"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Document Processing",
+            "item": [
+                {
+                    "name": "Upload Document",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/process/document",
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": ""
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Process Text",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/process/text",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"text\": \"John works at Microsoft. Microsoft is located in Seattle.\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Process URL",
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/process/url",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"url\": \"https://example.com\"\n}"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

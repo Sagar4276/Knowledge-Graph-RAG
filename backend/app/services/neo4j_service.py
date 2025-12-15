@@ -31,7 +31,7 @@ class Neo4jService:
         """Set up constraints for the Neo4j database."""
         with self.driver.session() as session:
             try:
-                session.run("CREATE CONSTRAINT IF NOT EXISTS ON (n:Node) ASSERT n.id IS UNIQUE")
+                session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (n:Node) REQUIRE n.id IS UNIQUE")
             except Exception as e:
                 logger.error(f"Could not create constraint: {e}")
     
@@ -71,14 +71,47 @@ class Neo4jService:
             graph_id: Unique identifier for the stored graph.
         """
         graph_id = str(uuid.uuid4())
+        return self._store_graph_internal(graph, graph_id, batch_size, use_merge=False)
+    
+    def store_graph_merge(self, graph: Dict[str, Any], graph_id: str = None, batch_size: int = 50) -> str:
+        """
+        Store a knowledge graph using MERGE to allow combining multiple datasets.
+        
+        This method uses MERGE instead of CREATE, so:
+        - Nodes with the same ID will be updated instead of causing errors
+        - Multiple CSVs can contribute to the same unified graph
+        - Properties are merged/updated
+        
+        Args:
+            graph: Dictionary containing nodes and edges.
+            graph_id: Optional graph ID. If provided, adds to existing graph.
+            batch_size: Number of nodes/edges to process in each batch.
+            
+        Returns:
+            graph_id: Unique identifier for the stored graph.
+        """
+        if graph_id is None:
+            graph_id = "network_security"  # Default unified graph ID
+        return self._store_graph_internal(graph, graph_id, batch_size, use_merge=True)
+    
+    def _store_graph_internal(self, graph: Dict[str, Any], graph_id: str, batch_size: int, use_merge: bool) -> str:
+        """
+        Internal method to store graph with either CREATE or MERGE.
+        """
         start_time = time.time()
         
         with self.driver.session() as session:
-            # Create graph container
-            session.run(
-                "CREATE (g:Graph {id: $graph_id, created: datetime()})",
-                graph_id=graph_id
-            )
+            # Create or merge graph container
+            if use_merge:
+                session.run(
+                    "MERGE (g:Graph {id: $graph_id}) ON CREATE SET g.created = datetime() ON MATCH SET g.updated = datetime()",
+                    graph_id=graph_id
+                )
+            else:
+                session.run(
+                    "CREATE (g:Graph {id: $graph_id, created: datetime()})",
+                    graph_id=graph_id
+                )
             
             # Process nodes in batches
             node_batches = [graph["nodes"][i:i + batch_size] for i in range(0, len(graph["nodes"]), batch_size)]
@@ -91,13 +124,25 @@ class Neo4jService:
                     node_type = node_data.get("type", "Entity")
                     properties = node_data.get("properties", {})
                     
-                    cypher = f"""
-                    CREATE (n:Node:`{node_type}` {{id: $id, label: $label}})
-                    SET n += $properties
-                    WITH n
-                    MATCH (g:Graph {{id: $graph_id}})
-                    CREATE (g)-[:CONTAINS]->(n)
-                    """
+                    if use_merge:
+                        # Use MERGE to update existing nodes or create new ones
+                        cypher = f"""
+                        MERGE (n:Node:`{node_type}` {{id: $id}})
+                        ON CREATE SET n.label = $label
+                        ON MATCH SET n.label = CASE WHEN n.label IS NULL OR n.label = '' THEN $label ELSE n.label END
+                        SET n += $properties
+                        WITH n
+                        MATCH (g:Graph {{id: $graph_id}})
+                        MERGE (g)-[:CONTAINS]->(n)
+                        """
+                    else:
+                        cypher = f"""
+                        CREATE (n:Node:`{node_type}` {{id: $id, label: $label}})
+                        SET n += $properties
+                        WITH n
+                        MATCH (g:Graph {{id: $graph_id}})
+                        CREATE (g)-[:CONTAINS]->(n)
+                        """
                     
                     session.run(
                         cypher,
@@ -117,21 +162,32 @@ class Neo4jService:
                     source_id = edge_data["source"]
                     target_id = edge_data["target"]
                     edge_label = edge_data.get("label", "RELATED_TO")
+                    edge_properties = edge_data.get("properties", {})
                     
-                    cypher = f"""
-                    MATCH (source:Node {{id: $source_id}})
-                    MATCH (target:Node {{id: $target_id}})
-                    CREATE (source)-[r:`{edge_label}` {{id: $edge_id}}]->(target)
-                    """
+                    if use_merge:
+                        # Use MERGE for edges too
+                        cypher = f"""
+                        MATCH (source:Node {{id: $source_id}})
+                        MATCH (target:Node {{id: $target_id}})
+                        MERGE (source)-[r:`{edge_label}`]->(target)
+                        SET r.id = $edge_id, r += $properties
+                        """
+                    else:
+                        cypher = f"""
+                        MATCH (source:Node {{id: $source_id}})
+                        MATCH (target:Node {{id: $target_id}})
+                        CREATE (source)-[r:`{edge_label}` {{id: $edge_id}}]->(target)
+                        """
                     
                     session.run(
                         cypher,
                         source_id=source_id,
                         target_id=target_id,
-                        edge_id=edge_id
+                        edge_id=edge_id,
+                        properties=edge_properties if use_merge else {}
                     )
         
-        logger.info(f"Graph {graph_id} created in {time.time() - start_time:.2f}s with {len(graph['nodes'])} nodes and {len(graph['edges'])} edges")
+        logger.info(f"Graph {graph_id} {'merged' if use_merge else 'created'} in {time.time() - start_time:.2f}s with {len(graph['nodes'])} nodes and {len(graph['edges'])} edges")
         return graph_id
     
     def get_graph(self, graph_id: str, node_limit: int = 1000, edge_limit: int = 2000) -> Optional[Dict[str, Any]]:
