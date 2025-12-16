@@ -126,20 +126,60 @@ Key functions:
 ---
 
 ### `services/rag_service.py`
-**Purpose**: Answers questions using the knowledge graph + LLM
+**Purpose**: Legacy RAG service (kept for backward compatibility)
 
-What it does:
-- Takes user question in natural language
-- Retrieves relevant context from the graph
-- Sends context + question to LLM (Groq)
-- Returns AI-generated answer with graph context
-- **Caches responses** to avoid repeated LLM calls
+Note: The primary query system now uses `cypher_query_service.py` for grounded answers.
 
-The RAG prompt includes:
-- Network topology info
-- Detected attacks and anomalies
-- Statistics about the traffic
-- Specific entity relationships
+---
+
+### `services/cypher_query_service.py` ⭐ NEW
+**Purpose**: Template-constrained Cypher queries with grounded RAG
+
+This is the **primary query system**. It prevents LLM hallucination by:
+1. Classifying user intent (not generating raw Cypher)
+2. Mapping intent to safe, parameterized Cypher templates
+3. Grounding LLM answers in actual query results
+
+Supported intents (10 types):
+- `attacks_detected`, `ip_connections`, `anomalies`, `top_talkers`
+- `port_analysis`, `network_topology`, `attack_details`
+- `suspicious_ips`, `protocol_analysis`, `general`
+
+Key classes:
+- `QueryIntent` - Enum of supported query types
+- `CypherQueryService` - Main service class
+- `query_with_grounding()` - Entry point for grounded queries
+
+---
+
+### `services/graph_anomaly_detector.py` ⭐ NEW
+**Purpose**: Graph-native anomaly detection
+
+Works on the graph **structure** (not just per-connection features):
+
+| Detection | What it finds |
+|-----------|--------------|
+| Degree spike | IP with connections > mean + 2σ |
+| Fan-out | Single IP → many ports on same target |
+| Protocol rarity | Protocols < 1% of traffic |
+| Suspicious ports | Known malware ports (4444, 31337, etc.) |
+
+Each anomaly includes **full explainability**:
+```python
+{
+    "anomaly_type": "degree_spike",
+    "entity": "10.0.0.5",
+    "confidence_score": 0.87,
+    "baseline": 12.3,
+    "observed": 47,
+    "reason": "IP has 47 connections, above average of 12.3"
+}
+```
+
+Key classes:
+- `GraphAnomalyResult` - Single anomaly with explainability
+- `GraphAnomalyDetector` - Main detector class
+- `analyze_graph_anomalies()` - Entry point
 
 ---
 

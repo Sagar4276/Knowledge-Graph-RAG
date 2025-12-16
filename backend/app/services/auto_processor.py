@@ -434,7 +434,30 @@ class AutoProcessor:
                         ip_attacks[src] = set()
                     ip_attacks[src].add(log['attack_type'])
         
-        # Create IP nodes with attack info
+        # Build IP -> anomaly data mapping
+        ip_anomaly_data = {}
+        for conn in connections:
+            src = conn.get("source_ip")
+            if src:
+                if src not in ip_anomaly_data:
+                    ip_anomaly_data[src] = {
+                        "is_anomaly": False,
+                        "anomaly_score": 0.0,
+                        "anomaly_types": [],
+                        "connection_count": 0
+                    }
+                ip_anomaly_data[src]["connection_count"] += 1
+                if conn.get("is_anomaly", False):
+                    ip_anomaly_data[src]["is_anomaly"] = True
+                    ip_anomaly_data[src]["anomaly_score"] = max(
+                        ip_anomaly_data[src]["anomaly_score"],
+                        conn.get("anomaly_score", 0)
+                    )
+                    for atype in conn.get("anomaly_types", []):
+                        if atype not in ip_anomaly_data[src]["anomaly_types"]:
+                            ip_anomaly_data[src]["anomaly_types"].append(atype)
+        
+        # Create IP nodes with attack info AND anomaly data
         for conn in connections:
             for ip_field in ["source_ip", "dest_ip"]:
                 ip = conn[ip_field]
@@ -445,7 +468,14 @@ class AutoProcessor:
                     
                     ip_attack_types = list(ip_attacks.get(ip, []))
                     is_attacker = len(ip_attack_types) > 0
-                    is_anomaly = conn.get("is_anomaly", False) if ip_field == "source_ip" else False
+                    
+                    # Get anomaly data for this IP
+                    anomaly_info = ip_anomaly_data.get(ip, {
+                        "is_anomaly": False,
+                        "anomaly_score": 0.0,
+                        "anomaly_types": [],
+                        "connection_count": 0
+                    })
                     
                     nodes.append({
                         "data": {
@@ -455,8 +485,11 @@ class AutoProcessor:
                             "properties": {
                                 "is_internal": is_internal,
                                 "is_attacker": is_attacker,
-                                "is_anomaly": is_anomaly,
+                                "is_anomaly": anomaly_info["is_anomaly"],
+                                "anomaly_score": anomaly_info["anomaly_score"],
+                                "anomaly_types": anomaly_info["anomaly_types"],
                                 "attack_types": ip_attack_types,
+                                "connection_count": anomaly_info["connection_count"],
                             }
                         }
                     })

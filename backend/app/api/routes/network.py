@@ -102,17 +102,22 @@ async def get_anomalies(graph_id: str):
     Get detected anomalies for a network graph.
     
     Returns a summary of all anomalies detected in the specified graph.
+    Now includes: anomaly_score, anomaly_types, and connection_count.
     """
     try:
-        # Query the graph for anomalous nodes
+        # Query for IP nodes with anomaly data (not ports)
         cypher_query = """
-        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n)
-        WHERE n.is_suspicious = true OR n.anomaly_count > 0
-        RETURN n.label AS ip, n.type AS type, 
-               n.anomaly_count AS anomaly_count,
-               labels(n) AS labels
-        ORDER BY n.anomaly_count DESC
-        LIMIT 20
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+        WHERE n.is_anomaly = true OR n.anomaly_score > 0.5
+        AND NOT n.type = 'Port'
+        RETURN n.label AS ip, 
+               n.type AS type,
+               n.anomaly_score AS anomaly_score,
+               n.anomaly_types AS anomaly_types,
+               n.connection_count AS connection_count,
+               n.is_anomaly AS is_anomaly
+        ORDER BY n.anomaly_score DESC
+        LIMIT 30
         """
         
         results = neo4j_service.query_graph(
@@ -122,15 +127,22 @@ async def get_anomalies(graph_id: str):
         
         anomalies = []
         for r in results:
+            # Format anomaly types with details
+            types = r.get("anomaly_types", []) or []
+            
             anomalies.append({
                 "ip": r.get("ip"),
                 "type": r.get("type"),
-                "anomaly_count": r.get("anomaly_count", 0)
+                "anomaly_score": r.get("anomaly_score", 0),
+                "anomaly_types": types,
+                "connection_count": r.get("connection_count", 0),
+                "anomaly_count": len(types) if types else (1 if r.get("is_anomaly") else 0)
             })
         
-        # Get total node count
+        # Get total IP node count (exclude ports)
         count_query = """
-        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n)
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+        WHERE n.type IN ['InternalIP', 'ExternalIP']
         RETURN count(n) AS total
         """
         count_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=count_query)
@@ -145,7 +157,7 @@ async def get_anomalies(graph_id: str):
             anomaly_percentage=(anomaly_count / total * 100) if total > 0 else 0,
             anomalies=anomalies,
             top_suspicious_ips=anomalies[:10],
-            summary=f"Detected {anomaly_count} suspicious entities out of {total} total nodes"
+            summary=f"Detected {anomaly_count} anomalous IPs out of {total} total IPs. Top threat: {anomalies[0]['ip'] if anomalies else 'None'} (score: {anomalies[0]['anomaly_score']:.2f})" if anomalies else f"No anomalies detected in {total} IPs"
         )
         
     except Exception as e:
@@ -271,13 +283,22 @@ async def get_network_stats(graph_id: str):
     Returns summary statistics about the network traffic.
     """
     try:
-        # Query for stats
+        # Query for stats - handle null types gracefully
         stats_query = """
-        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n)
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
         WITH n,
-             CASE WHEN n.type = 'InternalIP' THEN 1 ELSE 0 END AS is_internal,
-             CASE WHEN n.type = 'ExternalIP' THEN 1 ELSE 0 END AS is_external,
-             CASE WHEN n.type = 'Port' THEN 1 ELSE 0 END AS is_port
+             CASE 
+                 WHEN n.type = 'InternalIP' OR (n.is_internal = true AND n.label =~ '\\d+\\.\\d+\\.\\d+\\.\\d+') THEN 1 
+                 ELSE 0 
+             END AS is_internal,
+             CASE 
+                 WHEN n.type = 'ExternalIP' OR (n.is_internal = false AND n.label =~ '\\d+\\.\\d+\\.\\d+\\.\\d+') THEN 1 
+                 ELSE 0 
+             END AS is_external,
+             CASE 
+                 WHEN n.type = 'Port' OR n.label CONTAINS 'Port' THEN 1 
+                 ELSE 0 
+             END AS is_port
         RETURN 
             count(n) AS total_nodes,
             sum(is_internal) AS internal_ips,
@@ -292,13 +313,22 @@ async def get_network_stats(graph_id: str):
         
         stats = results[0]
         
-        # Get edge count
+        # Get edge count (actual connections)
         edge_query = """
-        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n)-[r]->(m)
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)-[r:CONNECTED_TO]->(m:Node)
         RETURN count(r) AS total_edges
         """
         edge_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=edge_query)
         total_edges = edge_result[0]["total_edges"] if edge_result else 0
+        
+        # Get anomaly stats
+        anomaly_query = """
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+        WHERE n.is_anomaly = true
+        RETURN count(n) AS anomaly_count, avg(n.anomaly_score) AS avg_score
+        """
+        anomaly_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=anomaly_query)
+        anomaly_stats = anomaly_result[0] if anomaly_result else {}
         
         return {
             "graph_id": graph_id,
@@ -307,6 +337,8 @@ async def get_network_stats(graph_id: str):
             "external_ips": stats.get("external_ips", 0),
             "unique_ports": stats.get("unique_ports", 0),
             "total_connections": total_edges,
+            "anomaly_count": anomaly_stats.get("anomaly_count", 0),
+            "avg_anomaly_score": round(anomaly_stats.get("avg_score", 0) or 0, 3),
         }
         
     except HTTPException:
@@ -400,16 +432,29 @@ async def analyze_graph(graph_id: str):
     Run all security analyses on an existing graph.
     
     Returns comprehensive analysis including:
-    - Anomaly detection results
+    - Anomaly detection results (ML-based)
+    - Graph-native anomaly detection (structural)
     - Port scan detection
     - Data exfiltration detection
     - Attack type summary
+    
+    Each anomaly includes full explainability:
+    - baseline: what's normal for this graph
+    - observed: what was actually seen
+    - confidence_score: 0-1 confidence level
+    - reason: human-readable explanation
     """
     try:
+        # Import graph anomaly detector
+        from app.services.graph_anomaly_detector import analyze_graph_anomalies
+        
         # Get graph data
         graph = neo4j_service.get_graph(graph_id)
         if not graph:
             raise HTTPException(status_code=404, detail=f"Graph {graph_id} not found")
+        
+        # Run graph-native anomaly detection
+        graph_anomalies = analyze_graph_anomalies(graph_id, neo4j_service)
         
         # Extract attack types from graph nodes
         attack_types = set()
@@ -445,10 +490,13 @@ async def analyze_graph(graph_id: str):
                 "attacker_ips": attacker_ips[:20],
                 "suspicious_ips": list(set(suspicious_ips))[:20],
             },
+            "graph_anomalies": graph_anomalies,  # NEW: Graph-native anomalies with explainability
             "security_summary": {
                 "has_attacks": len(attack_types) > 0,
                 "attack_count": len(attack_types),
                 "attacker_count": len(attacker_ips),
+                "graph_anomaly_count": graph_anomalies.get("summary", {}).get("total_anomalies", 0),
+                "risk_level": graph_anomalies.get("summary", {}).get("risk_level", "unknown"),
                 "threat_level": "high" if len(attack_types) > 3 else "medium" if len(attack_types) > 0 else "low"
             }
         }
@@ -543,3 +591,82 @@ async def list_network_graphs():
     except Exception as e:
         logger.error(f"Error listing graphs: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing graphs: {str(e)}")
+
+
+@router.post("/network/merge-graphs")
+async def merge_graphs(
+    semantic_graph_id: str,
+    telemetry_graph_id: str,
+    merged_graph_id: Optional[str] = None
+):
+    """
+    Merge a text-derived semantic graph with a CSV-derived telemetry graph.
+    
+    This enables correlation between:
+    - Analyst findings from threat reports (semantic)
+    - Raw network traffic data (telemetry)
+    
+    The merger:
+    - Deduplicates entities (IPs, ports) by label matching
+    - Tracks source provenance (which graph each entity came from)
+    - Identifies cross-references (entities in both graphs)
+    - Aggregates confidence scores and anomaly data
+    
+    Example use case:
+    1. Upload network CSV → graph ID "network_security"
+    2. Process threat report text → graph ID "abc123"
+    3. Merge them → find IPs mentioned in report that also appear anomalous in logs
+    """
+    try:
+        from app.services.graph_merger import GraphMerger
+        
+        merger = GraphMerger(neo4j_service)
+        result = merger.merge_graphs(
+            semantic_graph_id=semantic_graph_id,
+            telemetry_graph_id=telemetry_graph_id,
+            merged_graph_id=merged_graph_id
+        )
+        
+        return {
+            "status": "success",
+            "merged_graph_id": result["merged_graph_id"],
+            "statistics": result["statistics"],
+            "correlations_found": result["correlations_found"],
+            "message": result["message"],
+            "next_steps": [
+                f"Query the merged graph: POST /api/query with graph_id='{result['merged_graph_id']}'",
+                f"Find correlations: GET /api/network/correlations/{result['merged_graph_id']}"
+            ]
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error merging graphs: {e}")
+        raise HTTPException(status_code=500, detail=f"Error merging graphs: {str(e)}")
+
+
+@router.get("/network/correlations/{graph_id}")
+async def get_graph_correlations(graph_id: str):
+    """
+    Find entities that appear in multiple source graphs.
+    
+    These are valuable correlations between analyst findings and raw network data.
+    For example: An IP mentioned in a threat report that also shows anomalous behavior.
+    """
+    try:
+        from app.services.graph_merger import GraphMerger
+        
+        merger = GraphMerger(neo4j_service)
+        correlations = merger.find_correlations(graph_id)
+        
+        return {
+            "graph_id": graph_id,
+            "correlations_found": len(correlations),
+            "correlations": correlations,
+            "summary": f"Found {len(correlations)} entities that appear in multiple data sources"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error finding correlations: {e}")
+        raise HTTPException(status_code=500, detail=f"Error finding correlations: {str(e)}")

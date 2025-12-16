@@ -206,33 +206,36 @@ class NetworkAnomalyDetector:
             conn: Single connection dictionary
             
         Returns:
-            List of detected anomaly types
+            List of detected anomaly types with details
         """
         anomalies = []
         
-        # Check for suspicious ports
+        port = conn.get("dest_port", 0)
+        
+        # Check for suspicious ports - include port number in message
         if conn.get("is_suspicious_port", False):
-            anomalies.append("suspicious_port")
+            anomalies.append(f"suspicious_port:{port}")
         
         # Check for unusual external connections
         if conn.get("source_is_internal", False) and not conn.get("dest_is_internal", False):
             # Internal to external
-            if conn.get("dest_port", 0) in [4444, 5555, 6666, 31337]:
-                anomalies.append("known_malware_port")
+            if port in [4444, 5555, 6666, 31337]:
+                anomalies.append(f"known_malware_port:{port}")
             
             # Large data transfer to external
-            if conn.get("bytes_sent", 0) > 10_000_000:  # 10MB
-                anomalies.append("large_external_transfer")
+            bytes_sent = conn.get("bytes_sent", 0)
+            if bytes_sent > 10_000_000:  # 10MB
+                anomalies.append(f"large_external_transfer:{bytes_sent}bytes")
         
         # Check for unusual time
-        if self._time_score(conn.get("timestamp")) > 0.7:
-            anomalies.append("unusual_time")
+        time_score = self._time_score(conn.get("timestamp"))
+        if time_score > 0.7:
+            anomalies.append(f"unusual_time:score={time_score:.2f}")
         
         # Check for raw TCP/UDP on unusual ports
         if conn.get("protocol") in ["TCP", "UDP"]:
-            port = conn.get("dest_port", 0)
             if port > 49152 and port not in [49152, 49153]:
-                anomalies.append("high_ephemeral_port")
+                anomalies.append(f"high_ephemeral_port:{port}")
         
         return anomalies
     

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, File, UploadFile, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from typing import Optional
 from app.models.document import TextInput, URLInput, ProcessResponse
-from app.services.document_processor import process_document, process_text, process_url
+from app.services.document_processor import process_document, process_text, process_url, URLFetchError
 from app.services.graph_extractor import extract_knowledge_graph
 from app.services.neo4j_service import Neo4jService
 from app.api.dependencies import get_neo4j_service
@@ -51,7 +52,16 @@ async def process_url_input(
     url_input: URLInput,
     neo4j_service: Neo4jService = Depends(get_neo4j_service)
 ):
-    """Process content from a URL to extract knowledge graph"""
+    """
+    Process content from a URL to extract knowledge graph.
+    
+    Returns proper HTTP status codes for different failure modes:
+    - 504: URL timeout (site too slow)
+    - 502: Connection failed
+    - 403: Site blocks automated requests
+    - 404: Page not found
+    - 415: Unsupported content type
+    """
     try:
         text = process_url(url_input.url)
         kg = extract_knowledge_graph(text)
@@ -62,5 +72,11 @@ async def process_url_input(
             "nodes": kg["nodes"],
             "edges": kg["edges"]
         }
+    except URLFetchError as e:
+        # Return proper status code with structured error
+        return JSONResponse(
+            status_code=e.status_code,
+            content=e.to_dict()
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing URL: {str(e)}")

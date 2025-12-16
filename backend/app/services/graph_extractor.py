@@ -11,7 +11,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Define entity types and relation types for our knowledge graph
+# SECURITY-GRADE SCHEMA: Connection is a first-class entity, not just an edge
 ENTITY_TYPES = [
+    # General entity types
     "Person", 
     "Organization", 
     "Location", 
@@ -21,7 +23,8 @@ ENTITY_TYPES = [
     "Date",
     "Document",
     "Technology",
-    # Network Security Entity Types
+    
+    # Network Security Entity Types (Telemetry)
     "IPAddress",
     "InternalIP",
     "ExternalIP",
@@ -30,12 +33,34 @@ ENTITY_TYPES = [
     "Service",
     "Device",
     "Domain",
+    
+    # CRITICAL: Connection as a first-class entity (not just an edge)
+    # This allows attaching properties like timestamp, bytes, protocol to the connection itself
+    "Connection",          # A network connection event
+    "Session",             # A user session (login/logout)
+    
+    # Security Semantic Types
     "Vulnerability",
-    "Threat",
-    "Attack",
+    "Threat",              # General threat classification
+    "Attack",              # Specific attack instance
+    "AttackChain",         # Sequence of related attacks (kill chain)
+    "Indicator",           # IOC - Indicator of Compromise
+    "Evidence",            # Supporting evidence for a finding
+    
+    # Attack Types (MITRE ATT&CK aligned)
+    "InitialAccess",       # T1190, T1133, etc.
+    "Execution",           # T1059, T1204, etc.
+    "Persistence",         # T1098, T1136, etc.
+    "PrivilegeEscalation",
+    "CredentialAccess",    # T1003, T1110, etc.
+    "LateralMovement",     # T1021, T1080, etc.
+    "Collection",          # T1005, T1039, etc.
+    "Exfiltration",        # T1041, T1048, etc.
+    "CommandAndControl",   # T1071, T1095, etc.
 ]
 
 RELATION_TYPES = [
+    # General relationship types
     "WORKS_FOR",
     "LOCATED_IN",
     "FOUNDED_BY",
@@ -62,6 +87,7 @@ RELATION_TYPES = [
     "OCCURRED_ON",
     "USES_TECHNOLOGY",
     "ACQUIRED",
+    
     # Network Security Relationship Types
     "CONNECTED_TO",
     "USES_PORT",
@@ -74,6 +100,28 @@ RELATION_TYPES = [
     "ATTACKED",
     "EXPLOITS",
     "TARGETS",
+    
+    # ATTACK CHAIN RELATIONSHIPS (causal/temporal ordering)
+    "LEADS_TO",            # A → B where A enables B (e.g., credential compromise → lateral movement)
+    "FOLLOWED_BY",         # Temporal: A happened before B
+    "RESULTS_IN",          # Causal: A caused B
+    "PRECEDED_BY",         # Temporal: A happened after B
+    "ENABLES",             # A makes B possible
+    "INDICATES",           # A is evidence of B
+    
+    # CONNECTION-CENTRIC RELATIONSHIPS (Connection as a node)
+    "INITIATED",           # Actor → Connection (who started the connection)
+    "SOURCE_OF",           # IP/Device → Connection (source of connection)
+    "TARGET_OF",           # IP/Device → Connection (destination of connection)
+    "USED_PROTOCOL",       # Connection → Protocol
+    "USED_PORT",           # Connection → Port
+    "OCCURRED_AT",         # Connection/Event → Timestamp
+    "TRANSFERRED_DATA",    # Connection → data volume info
+    
+    # EVIDENCE RELATIONSHIPS
+    "SUPPORTED_BY",        # Finding → Evidence
+    "OBSERVED_IN",         # Indicator → Where it was seen
+    "ATTRIBUTED_TO",       # Attack → Threat actor
 ]
 
 # Semantic relationship mapping for normalization
@@ -165,33 +213,86 @@ class CustomGraphTransformer:
         logger.info("Initialized CustomGraphTransformer")
     
     def _create_extraction_prompt(self, text: str) -> str:
-        """Create a structured prompt for knowledge graph extraction."""
-        return f"""
-Extract a knowledge graph from the following text. Follow these guidelines:
+        """Create a security-grade structured prompt for knowledge graph extraction."""
+        return f'''Extract a SECURITY-GRADE knowledge graph from the following text.
 
-ENTITY TYPES: {', '.join(self.allowed_nodes)}
-RELATIONSHIP TYPES: {', '.join(self.allowed_relationships)}
+## CRITICAL SCHEMA RULES:
 
-Instructions:
-1. Identify all entities and classify them into the provided types
-2. Extract relationships between entities using the provided relationship types
-3. Use meaningful, descriptive labels for entities
-4. Ensure relationships make logical sense
+### 1. CONNECTION AS A NODE (NOT JUST AN EDGE)
+When describing network connections, create a Connection node:
+- BAD:  IP_A --CONNECTED_TO--> IP_B
+- GOOD: IP_A --SOURCE_OF--> Connection_1 --TARGET_OF--> IP_B
+        Connection_1 --USED_PORT--> Port_22
+        Connection_1 --USED_PROTOCOL--> SSH
 
-Text to analyze:
+### 2. ATTACK CHAINS MUST BE EXPLICIT
+Use LEADS_TO, FOLLOWED_BY, RESULTS_IN to show causality:
+- CredentialCompromise --LEADS_TO--> LateralMovement
+- LateralMovement --LEADS_TO--> Exfiltration
+
+### 3. CONFIDENCE AND EVIDENCE
+For security findings, include confidence and source in properties:
+- "properties": {{"confidence": 0.85, "source": "text_inference", "severity": "high"}}
+
+### 4. ENTITY TYPE SELECTION
+Network entities (telemetry):
+- InternalIP, ExternalIP, Port, Protocol, Device, Connection, Session
+
+Security events:
+- Attack, Threat, Vulnerability, Indicator, Evidence, AttackChain
+
+Attack stages (MITRE aligned):
+- InitialAccess, CredentialAccess, LateralMovement, Exfiltration, CommandAndControl
+
+### 5. RELATIONSHIP TYPES FOR SECURITY
+
+Attack chain (use these for kill chain):
+- LEADS_TO: A enables or causes B
+- FOLLOWED_BY: A happened before B  
+- RESULTS_IN: A caused B
+- INDICATES: A is evidence of B
+
+Connection-centric:
+- SOURCE_OF: IP/Device originated Connection
+- TARGET_OF: IP/Device is destination of Connection
+- INITIATED: Person/Process started Connection
+- USED_PORT: Connection used this port
+- USED_PROTOCOL: Connection used this protocol
+- OCCURRED_AT: Event/Connection happened at timestamp
+
+## ENTITY TYPES AVAILABLE:
+{', '.join(self.allowed_nodes)}
+
+## RELATIONSHIP TYPES AVAILABLE:
+{', '.join(self.allowed_relationships)}
+
+## TEXT TO ANALYZE:
 {text}
 
-Return ONLY a valid JSON object with this exact structure:
+## REQUIRED OUTPUT FORMAT:
+Return ONLY a valid JSON object:
 {{
   "nodes": [
-    {{ "id": "unique_id_1", "type": "EntityType", "label": "Entity Name" }},
-    {{ "id": "unique_id_2", "type": "EntityType", "label": "Entity Name" }}
+    {{ 
+      "id": "conn_1", 
+      "type": "Connection", 
+      "label": "SSH Connection to DB Server",
+      "properties": {{"timestamp": "2025-01-12T10:30:00Z", "bytes_transferred": 150000000}}
+    }},
+    {{ 
+      "id": "threat_1", 
+      "type": "LateralMovement", 
+      "label": "SSH-based Lateral Movement",
+      "properties": {{"confidence": 0.85, "source": "text_inference", "severity": "high"}}
+    }}
   ],
   "relationships": [
-    {{ "source": "unique_id_1", "target": "unique_id_2", "type": "RELATIONSHIP_TYPE" }}
+    {{ "source": "ip_internal", "target": "conn_1", "type": "SOURCE_OF" }},
+    {{ "source": "conn_1", "target": "ip_external", "type": "TARGET_OF" }},
+    {{ "source": "threat_credential", "target": "threat_lateral", "type": "LEADS_TO" }}
   ]
 }}
-"""
+'''
     
     def _invoke_llm(self, prompt: str) -> str:
         """Invoke the LLM with error handling for different interfaces."""
@@ -291,14 +392,23 @@ def get_graph_transformer() -> CustomGraphTransformer:
 
 
 def validate_graph_data(graph_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate and clean graph data structure."""
+    """Validate and clean graph data structure with security-grade properties."""
     validated_data = {
         "nodes": [],
-        "edges": []
+        "edges": [],
+        "graph_type": "semantic"  # Mark as semantic (vs telemetry from network logs)
     }
     
     nodes = graph_data.get("nodes", [])
     relationships = graph_data.get("relationships", graph_data.get("edges", []))
+    
+    # Security entity types that should have confidence/source
+    SECURITY_TYPES = {
+        "Threat", "Attack", "AttackChain", "Vulnerability", "Indicator", 
+        "Evidence", "InitialAccess", "CredentialAccess", "LateralMovement",
+        "Exfiltration", "CommandAndControl", "Persistence", "PrivilegeEscalation",
+        "Collection", "Execution"
+    }
     
     # Validate nodes - ALWAYS generate unique UUIDs to avoid conflicts
     node_ids = set()
@@ -318,12 +428,33 @@ def validate_graph_data(graph_data: Dict[str, Any]) -> Dict[str, Any]:
             
         node_ids.add(new_id)
         
+        # Get node type and properties
+        node_type = node.get("type", "Entity")
+        properties = node.get("properties", {})
+        
+        # Add default security properties for security entity types
+        if node_type in SECURITY_TYPES:
+            if "confidence" not in properties:
+                properties["confidence"] = 0.7  # Default confidence for text inference
+            if "source" not in properties:
+                properties["source"] = "text_inference"
+            if "severity" not in properties and node_type in ["Attack", "Exfiltration", "CommandAndControl"]:
+                properties["severity"] = "high"
+        
+        # Add entity_class to distinguish telemetry vs semantic
+        if node_type in ["InternalIP", "ExternalIP", "Port", "Protocol", "Connection", "Session"]:
+            properties["entity_class"] = "telemetry"
+        elif node_type in SECURITY_TYPES:
+            properties["entity_class"] = "security"
+        else:
+            properties["entity_class"] = "semantic"
+        
         validated_data["nodes"].append({
             "data": {
                 "id": new_id,
                 "label": node.get("label", f"Entity {len(validated_data['nodes']) + 1}"),
-                "type": node.get("type", "Entity"),
-                "properties": node.get("properties", {})
+                "type": node_type,
+                "properties": properties
             }
         })
     
@@ -343,12 +474,20 @@ def validate_graph_data(graph_data: Dict[str, Any]) -> Dict[str, Any]:
         if source_id and target_id:
             rel_type = rel.get("type", "RELATED_TO")
             
+            # Add edge properties for security relationships
+            edge_properties = {}
+            if rel_type in ["LEADS_TO", "FOLLOWED_BY", "RESULTS_IN"]:
+                edge_properties["edge_class"] = "attack_chain"
+            elif rel_type in ["SOURCE_OF", "TARGET_OF", "USED_PORT", "USED_PROTOCOL"]:
+                edge_properties["edge_class"] = "connection"
+            
             validated_data["edges"].append({
                 "data": {
                     "id": f"e_{uuid.uuid4().hex[:8]}",
                     "source": source_id,
                     "target": target_id,
-                    "label": rel_type
+                    "label": rel_type,
+                    "properties": edge_properties
                 }
             })
     
