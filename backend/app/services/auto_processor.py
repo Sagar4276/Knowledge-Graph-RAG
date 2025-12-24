@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 class DatasetFormat:
     """Enum-like class for supported dataset formats."""
     UNSW_NB15 = "unsw_nb15"
+    UNSW_NB15_PREPROCESSED = "unsw_nb15_preprocessed"  # Training/testing sets without IPs
     CICIDS2017 = "cicids2017"
     CUSTOM_JSON = "custom_json"
     UNKNOWN = "unknown"
@@ -79,10 +80,15 @@ def detect_dataset_format(csv_path: str) -> Tuple[str, List[str]]:
                     logger.info(f"Detected CICIDS2017 flow format (no IPs)")
                     return DatasetFormat.CICIDS2017, first_values
             
-            # Check for attack_cat or Label columns (UNSW-NB15 with headers)
-            if 'attack_cat' in lower_headers or 'label' in lower_headers:
-                logger.info(f"Detected labeled security dataset")
-                return DatasetFormat.CICIDS2017, first_values
+            # Check for srcip column (UNSW-NB15 with headers)
+            if 'srcip' in lower_headers:
+                logger.info(f"Detected UNSW-NB15 format with headers")
+                return DatasetFormat.UNSW_NB15, first_values
+            
+            # Check for preprocessed UNSW-NB15 (has id, attack_cat, label but NO srcip)
+            if 'attack_cat' in lower_headers and 'label' in lower_headers and 'id' in lower_headers:
+                logger.info(f"Detected UNSW-NB15 preprocessed format (no IPs, will generate synthetic)")
+                return DatasetFormat.UNSW_NB15_PREPROCESSED, first_values
             
             # Check if second row looks like UNSW-NB15 data
             if len(second_values) >= 45 and _looks_like_ip(second_values[0]):
@@ -125,6 +131,8 @@ def convert_csv_to_logs(csv_path: str, max_rows: int = 5000) -> List[Dict[str, A
     
     if format_type == DatasetFormat.UNSW_NB15:
         return _convert_unsw_nb15(csv_path, columns, max_rows)
+    elif format_type == DatasetFormat.UNSW_NB15_PREPROCESSED:
+        return _convert_unsw_nb15_preprocessed(csv_path, columns, max_rows)
     elif format_type == DatasetFormat.CICIDS2017:
         return _convert_cicids(csv_path, columns, max_rows)
     else:
@@ -132,71 +140,269 @@ def convert_csv_to_logs(csv_path: str, max_rows: int = 5000) -> List[Dict[str, A
 
 
 def _convert_unsw_nb15(csv_path: str, columns: List[str], max_rows: int) -> List[Dict[str, Any]]:
-    """Convert UNSW-NB15 format CSV."""
+    """Convert UNSW-NB15 format CSV (with or without headers)."""
     logs = []
     base_time = datetime.now()
     
+    # Check if file has headers by looking at first row
+    has_headers = False
     with open(csv_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
-        reader = csv.reader(f)
+        first_line = f.readline().strip()
+        first_values = first_line.split(',')
+        if first_values:
+            first_values[0] = first_values[0].strip().lstrip('\ufeff')
+        # If first value is not an IP, assume headers exist
+        if not _looks_like_ip(first_values[0]):
+            has_headers = True
+            logger.info(f"UNSW-NB15 file has headers. First 5 columns: {first_values[:5]}")
+    
+    with open(csv_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
+        if has_headers:
+            # Use DictReader when file has headers
+            reader = csv.DictReader(f)
+            
+            # Log the actual fieldnames for debugging
+            logger.info(f"CSV fieldnames: {reader.fieldnames[:10] if reader.fieldnames else 'None'}")
+            
+            for i, row in enumerate(reader):
+                if i >= max_rows:
+                    break
+                
+                try:
+                    # Normalize column names - lowercase and strip whitespace
+                    normalized_row = {k.lower().strip(): v for k, v in row.items()}
+                    
+                    source_ip = normalized_row.get('srcip', '').strip()
+                    dest_ip = normalized_row.get('dstip', '').strip()
+                    
+                    # Debug first few rows
+                    if i < 3:
+                        logger.debug(f"Row {i}: srcip={source_ip}, dstip={dest_ip}")
+                    
+                    if not source_ip or not dest_ip:
+                        if i < 3:
+                            logger.warning(f"Row {i} missing IP: srcip='{source_ip}', dstip='{dest_ip}'")
+                        continue
+                    
+                    if not _looks_like_ip(source_ip):
+                        if i < 3:
+                            logger.warning(f"Row {i} srcip doesn't look like IP: '{source_ip}'")
+                        continue
+                    
+                    try:
+                        sport_val = normalized_row.get('sport', '0') or '0'
+                        dsport_val = normalized_row.get('dsport', '0') or '0'
+                        source_port = int(float(sport_val))
+                        dest_port = int(float(dsport_val))
+                    except:
+                        source_port = 0
+                        dest_port = 80
+                    
+                    try:
+                        sbytes_val = normalized_row.get('sbytes', '0') or '0'
+                        dbytes_val = normalized_row.get('dbytes', '0') or '0'
+                        dur_val = normalized_row.get('dur', '0') or '0'
+                        bytes_sent = int(float(sbytes_val))
+                        bytes_received = int(float(dbytes_val))
+                        duration = float(dur_val)
+                    except:
+                        bytes_sent = 0
+                        bytes_received = 0
+                        duration = 0
+                    
+                    attack_cat = normalized_row.get('attack_cat', '').strip()
+                    label = normalized_row.get('label', '0')
+                    is_attack = str(label) == '1' or (attack_cat and attack_cat not in ['', 'Normal', '-', ' '])
+                    
+                    log_entry = {
+                        "timestamp": (base_time + timedelta(seconds=i)).strftime("%Y-%m-%d %H:%M:%S"),
+                        "source_ip": source_ip,
+                        "dest_ip": dest_ip,
+                        "source_port": source_port,
+                        "dest_port": dest_port,
+                        "protocol": normalized_row.get('proto', 'TCP').upper(),
+                        "bytes_sent": bytes_sent,
+                        "bytes_received": bytes_received,
+                        "duration": duration,
+                        "action": "deny" if is_attack else "allow",
+                    }
+                    
+                    if is_attack and attack_cat and attack_cat not in ['', '-', ' ']:
+                        log_entry["attack_type"] = attack_cat
+                    
+                    logs.append(log_entry)
+                    
+                except Exception as e:
+                    if i < 3:
+                        logger.error(f"Error parsing row {i}: {e}")
+                    continue
+        else:
+            # No headers - use original column mapping approach
+            reader = csv.reader(f)
+            for i, row in enumerate(reader):
+                if i >= max_rows:
+                    break
+                
+                try:
+                    if len(row) < 45:
+                        continue
+                    
+                    data = dict(zip(columns, row))
+                    
+                    source_ip = data.get('srcip', '').strip()
+                    dest_ip = data.get('dstip', '').strip()
+                    
+                    if not source_ip or not dest_ip or not _looks_like_ip(source_ip):
+                        continue
+                    
+                    try:
+                        source_port = int(float(data.get('sport', 0)))
+                        dest_port = int(float(data.get('dsport', 0)))
+                    except:
+                        source_port = 0
+                        dest_port = 80
+                    
+                    try:
+                        bytes_sent = int(float(data.get('sbytes', 0)))
+                        bytes_received = int(float(data.get('dbytes', 0)))
+                        duration = float(data.get('dur', 0))
+                    except:
+                        bytes_sent = 0
+                        bytes_received = 0
+                        duration = 0
+                    
+                    attack_cat = data.get('attack_cat', '').strip()
+                    label = data.get('Label', '0')
+                    is_attack = label == '1' or (attack_cat and attack_cat not in ['', 'Normal', '-'])
+                    
+                    log_entry = {
+                        "timestamp": (base_time + timedelta(seconds=i)).strftime("%Y-%m-%d %H:%M:%S"),
+                        "source_ip": source_ip,
+                        "dest_ip": dest_ip,
+                        "source_port": source_port,
+                        "dest_port": dest_port,
+                        "protocol": data.get('proto', 'TCP').upper(),
+                        "bytes_sent": bytes_sent,
+                        "bytes_received": bytes_received,
+                        "duration": duration,
+                        "action": "deny" if is_attack else "allow",
+                    }
+                    
+                    if is_attack and attack_cat and attack_cat not in ['', '-']:
+                        log_entry["attack_type"] = attack_cat
+                    
+                    logs.append(log_entry)
+                    
+                except Exception as e:
+                    continue
+    
+    logger.info(f"Converted {len(logs)} entries from UNSW-NB15 format")
+    return logs
+
+
+def _convert_unsw_nb15_preprocessed(csv_path: str, columns: List[str], max_rows: int) -> List[Dict[str, Any]]:
+    """
+    Convert preprocessed UNSW-NB15 format CSV (training/testing sets without IP addresses).
+    Generates synthetic IPs from the row ID to enable network graph building.
+    """
+    logs = []
+    base_time = datetime.now()
+    
+    # Generate deterministic IPs from ID - creates realistic network topology
+    def id_to_ip(row_id: int, is_source: bool = True) -> str:
+        """Generate a deterministic IP from row ID."""
+        if is_source:
+            # Internal sources: 192.168.x.x or 10.x.x.x
+            subnet = (row_id % 2)
+            if subnet == 0:
+                return f"192.168.{(row_id // 256) % 256}.{row_id % 256}"
+            else:
+                return f"10.{(row_id // 65536) % 256}.{(row_id // 256) % 256}.{row_id % 256}"
+        else:
+            # Destinations: could be internal or external based on pattern
+            if row_id % 5 == 0:  # 20% external
+                return f"{59 + (row_id % 100)}.{(row_id // 256) % 256}.{row_id % 256}.{(row_id * 7) % 256}"
+            else:  # 80% internal
+                return f"192.168.{(row_id // 100) % 256}.{(row_id * 3) % 256}"
+    
+    with open(csv_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
+        reader = csv.DictReader(f)
+        
+        logger.info(f"Processing preprocessed UNSW-NB15 file with columns: {reader.fieldnames[:10] if reader.fieldnames else 'None'}")
         
         for i, row in enumerate(reader):
             if i >= max_rows:
                 break
             
             try:
-                if len(row) < 45:
-                    continue
+                # Normalize column names
+                normalized_row = {k.lower().strip(): v for k, v in row.items()}
                 
-                data = dict(zip(columns, row))
-                
-                source_ip = data.get('srcip', '').strip()
-                dest_ip = data.get('dstip', '').strip()
-                
-                if not source_ip or not dest_ip or not _looks_like_ip(source_ip):
-                    continue
-                
+                # Get row ID for synthetic IP generation
                 try:
-                    source_port = int(float(data.get('sport', 0)))
-                    dest_port = int(float(data.get('dsport', 0)))
+                    row_id = int(normalized_row.get('id', i))
                 except:
-                    source_port = 0
-                    dest_port = 80
+                    row_id = i
+                
+                # Generate synthetic IPs from row ID
+                source_ip = id_to_ip(row_id, is_source=True)
+                dest_ip = id_to_ip(row_id, is_source=False)
+                
+                # Parse other fields
+                try:
+                    duration = float(normalized_row.get('dur', 0) or 0)
+                except:
+                    duration = 0
                 
                 try:
-                    bytes_sent = int(float(data.get('sbytes', 0)))
-                    bytes_received = int(float(data.get('dbytes', 0)))
-                    duration = float(data.get('dur', 0))
+                    bytes_sent = int(float(normalized_row.get('sbytes', 0) or 0))
+                    bytes_received = int(float(normalized_row.get('dbytes', 0) or 0))
                 except:
                     bytes_sent = 0
                     bytes_received = 0
-                    duration = 0
                 
-                attack_cat = data.get('attack_cat', '').strip()
-                label = data.get('Label', '0')
-                is_attack = label == '1' or (attack_cat and attack_cat not in ['', 'Normal', '-'])
+                protocol = normalized_row.get('proto', 'tcp').upper()
+                
+                # Get attack information
+                attack_cat = normalized_row.get('attack_cat', '').strip()
+                label = normalized_row.get('label', '0')
+                is_attack = str(label) == '1' or (attack_cat and attack_cat not in ['', 'Normal', '-', ' '])
+                
+                # Generate synthetic port from service if available
+                service = normalized_row.get('service', '-')
+                service_ports = {
+                    'http': 80, 'https': 443, 'ftp': 21, 'ssh': 22, 'dns': 53,
+                    'smtp': 25, 'pop3': 110, 'imap': 143, 'snmp': 161, 'dhcp': 67
+                }
+                dest_port = service_ports.get(service.lower(), 80 + (row_id % 1000))
                 
                 log_entry = {
                     "timestamp": (base_time + timedelta(seconds=i)).strftime("%Y-%m-%d %H:%M:%S"),
                     "source_ip": source_ip,
                     "dest_ip": dest_ip,
-                    "source_port": source_port,
+                    "source_port": 1024 + (row_id % 60000),
                     "dest_port": dest_port,
-                    "protocol": data.get('proto', 'TCP').upper(),
+                    "protocol": protocol,
                     "bytes_sent": bytes_sent,
                     "bytes_received": bytes_received,
                     "duration": duration,
                     "action": "deny" if is_attack else "allow",
                 }
                 
-                if is_attack and attack_cat and attack_cat not in ['', '-']:
+                if is_attack and attack_cat and attack_cat not in ['', '-', ' ', 'Normal']:
                     log_entry["attack_type"] = attack_cat
                 
                 logs.append(log_entry)
                 
+                if i < 3:
+                    logger.debug(f"Row {i}: Generated {source_ip} -> {dest_ip}, attack={attack_cat}, label={label}")
+                
             except Exception as e:
+                if i < 3:
+                    logger.error(f"Error parsing preprocessed row {i}: {e}")
                 continue
     
-    logger.info(f"Converted {len(logs)} entries from UNSW-NB15 format")
+    logger.info(f"Converted {len(logs)} entries from preprocessed UNSW-NB15 format")
     return logs
 
 
@@ -333,16 +539,50 @@ class AutoProcessor:
         Returns:
             Complete processing result with graph_id and analysis
         """
+        import time
+        start_time = time.time()
+        
         logger.info(f"Starting auto-processing of {csv_path}")
         
-        # Step 1: Convert CSV to logs
+        # Step 1: Detect format first
+        format_type, columns = detect_dataset_format(csv_path)
+        
+        # Map format type to display name
+        format_display = {
+            DatasetFormat.UNSW_NB15: "UNSW-NB15",
+            DatasetFormat.UNSW_NB15_PREPROCESSED: "UNSW-NB15 (Preprocessed)",
+            DatasetFormat.CICIDS2017: "CICIDS2017",
+            DatasetFormat.CUSTOM_JSON: "Custom JSON",
+            DatasetFormat.UNKNOWN: "Unknown"
+        }.get(format_type, "Unknown")
+        
+        # Step 2: Convert CSV to logs
         logs = convert_csv_to_logs(csv_path, max_rows)
         
         if not logs:
             raise ValueError(f"No valid log entries could be extracted from {csv_path}")
         
-        # Step 2: Process and analyze
-        return self.process_logs(logs)
+        # Step 3: Process and analyze
+        result = self.process_logs(logs)
+        
+        # Add format detection and timing info
+        processing_time = time.time() - start_time
+        result["format_detected"] = format_display
+        result["processing_time"] = round(processing_time, 2)
+        result["rows_processed"] = len(logs)
+        result["message"] = "CSV processed successfully"
+        
+        # Add stats object in expected format
+        result["stats"] = {
+            "total_nodes": result["processing_summary"]["nodes_created"],
+            "total_edges": result["processing_summary"]["edges_created"],
+            "total_ips": result["processing_summary"]["unique_ips"],
+            "total_ports": result["processing_summary"]["unique_ports"],
+            "total_connections": result["processing_summary"]["valid_connections"],
+            "anomaly_count": result["security_analysis"]["anomalies_detected"]
+        }
+        
+        return result
     
     def process_logs(self, logs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -407,7 +647,7 @@ class AutoProcessor:
             },
             "top_threats": {
                 "scanners": [s["scanner_ip"] for s in port_scans[:5]],
-                "anomalous_ips": summary.get("anomalous_ips", [])[:5],
+                "anomalous_ips": [ip["ip"] for ip in summary.get("top_suspicious_ips", [])[:5]],
             }
         }
         

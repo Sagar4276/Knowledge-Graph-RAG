@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import document, graph, query, network
+# NOTE: document router moved to deprecated/ folder
+from app.api.routes import graph, query, network
 from app.config import settings
 from app.services.neo4j_service import Neo4jService
 import logging
@@ -38,16 +39,41 @@ neo4j_service = Neo4jService(
 )
 
 # Include routers
-app.include_router(document.router, prefix=settings.api_prefix, tags=["Document Processing"])
+# NOTE: Document router disabled - these endpoints synthesize graphs from text
+# instead of querying actual network data, causing confusion. Use /api/network/query instead.
+# app.include_router(document.router, prefix=settings.api_prefix, tags=["Document Processing"])
 app.include_router(graph.router, prefix=settings.api_prefix, tags=["Graph Operations"])
 app.include_router(query.router, prefix=settings.api_prefix, tags=["RAG Queries"])
 app.include_router(network.router, prefix=settings.api_prefix, tags=["Network Security"])
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with database connectivity check"""
     logger.debug("Health check endpoint called")
-    return {"status": "healthy", "version": "2.0.0"}
+    
+    # Check Neo4j connectivity
+    neo4j_status = "healthy"
+    try:
+        graphs = neo4j_service.list_graphs()
+        neo4j_status = "connected"
+    except Exception as e:
+        logger.error(f"Neo4j health check failed: {e}")
+        neo4j_status = "disconnected"
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "error": "Database connection lost",
+                "detail": "Unable to connect to Neo4j"
+            }
+        )
+    
+    return {
+        "status": "healthy",
+        "version": "2.0.0",
+        "database": neo4j_status
+    }
 
 @app.on_event("startup")
 async def startup_event():

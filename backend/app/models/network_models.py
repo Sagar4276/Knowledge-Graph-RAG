@@ -88,7 +88,11 @@ class AnomalyReport(BaseModel):
     total_connections: int
     anomalies_detected: int
     anomaly_percentage: float
+    anomaly_rate: Optional[float] = None  # Decimal rate (0.0-1.0)
+    threshold: Optional[float] = None  # Isolation Forest threshold
+    anomaly_distribution: Optional[Dict[str, int]] = None  # normal/suspicious/critical counts
     anomalies: List[Dict[str, Any]]
+    top_anomalies: Optional[List[Dict[str, Any]]] = None  # Detailed top anomalies
     top_suspicious_ips: List[Dict[str, Any]]
     summary: str
 

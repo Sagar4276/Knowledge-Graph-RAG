@@ -96,7 +96,7 @@ class Neo4jService:
     
     def _store_graph_internal(self, graph: Dict[str, Any], graph_id: str, batch_size: int, use_merge: bool) -> str:
         """
-        Internal method to store graph with either CREATE or MERGE.
+        Internal method to store graph with either CREATE or MERGE using true batch processing.
         """
         start_time = time.time()
         
@@ -113,79 +113,76 @@ class Neo4jService:
                     graph_id=graph_id
                 )
             
-            # Process nodes in batches
-            node_batches = [graph["nodes"][i:i + batch_size] for i in range(0, len(graph["nodes"]), batch_size)]
+            # Process nodes in batches using UNWIND for efficiency
+            nodes_list = []
+            for node in graph["nodes"]:
+                node_data = node["data"]
+                nodes_list.append({
+                    "id": node_data["id"],
+                    "label": node_data.get("label", ""),
+                    "type": node_data.get("type", "Entity"),
+                    "properties": node_data.get("properties", {})
+                })
             
-            for batch in node_batches:
-                for node in batch:
-                    node_data = node["data"]
-                    node_id = node_data["id"]
-                    node_label = node_data.get("label", "")
-                    node_type = node_data.get("type", "Entity")
-                    properties = node_data.get("properties", {})
-                    
-                    if use_merge:
-                        # Use MERGE to update existing nodes or create new ones
-                        cypher = f"""
-                        MERGE (n:Node:`{node_type}` {{id: $id}})
-                        ON CREATE SET n.label = $label
-                        ON MATCH SET n.label = CASE WHEN n.label IS NULL OR n.label = '' THEN $label ELSE n.label END
-                        SET n += $properties
-                        WITH n
-                        MATCH (g:Graph {{id: $graph_id}})
-                        MERGE (g)-[:CONTAINS]->(n)
-                        """
-                    else:
-                        cypher = f"""
-                        CREATE (n:Node:`{node_type}` {{id: $id, label: $label}})
-                        SET n += $properties
-                        WITH n
-                        MATCH (g:Graph {{id: $graph_id}})
-                        CREATE (g)-[:CONTAINS]->(n)
-                        """
-                    
-                    session.run(
-                        cypher,
-                        id=node_id,
-                        label=node_label,
-                        properties=properties,
-                        graph_id=graph_id
-                    )
+            # Batch insert nodes using UNWIND (much faster than individual inserts)
+            for i in range(0, len(nodes_list), batch_size):
+                batch = nodes_list[i:i + batch_size]
+                
+                if use_merge:
+                    cypher = """
+                    UNWIND $nodes AS node
+                    MERGE (n:Node {id: node.id})
+                    ON CREATE SET n.label = node.label, n.type = node.type
+                    ON MATCH SET n.label = CASE WHEN n.label IS NULL OR n.label = '' THEN node.label ELSE n.label END
+                    SET n += node.properties
+                    WITH n
+                    MATCH (g:Graph {id: $graph_id})
+                    MERGE (g)-[:CONTAINS]->(n)
+                    """
+                else:
+                    cypher = """
+                    UNWIND $nodes AS node
+                    CREATE (n:Node {id: node.id, label: node.label, type: node.type})
+                    SET n += node.properties
+                    WITH n
+                    MATCH (g:Graph {id: $graph_id})
+                    CREATE (g)-[:CONTAINS]->(n)
+                    """
+                
+                session.run(cypher, nodes=batch, graph_id=graph_id)
             
-            # Process edges in batches
-            edge_batches = [graph["edges"][i:i + batch_size] for i in range(0, len(graph["edges"]), batch_size)]
+            # Process edges in batches using UNWIND
+            edges_list = []
+            for edge in graph["edges"]:
+                edge_data = edge["data"]
+                edges_list.append({
+                    "id": edge_data["id"],
+                    "source": edge_data["source"],
+                    "target": edge_data["target"],
+                    "label": edge_data.get("label", "RELATED_TO"),
+                    "properties": edge_data.get("properties", {})
+                })
             
-            for batch in edge_batches:
-                for edge in batch:
-                    edge_data = edge["data"]
-                    edge_id = edge_data["id"]
-                    source_id = edge_data["source"]
-                    target_id = edge_data["target"]
-                    edge_label = edge_data.get("label", "RELATED_TO")
-                    edge_properties = edge_data.get("properties", {})
-                    
-                    if use_merge:
-                        # Use MERGE for edges too
-                        cypher = f"""
-                        MATCH (source:Node {{id: $source_id}})
-                        MATCH (target:Node {{id: $target_id}})
-                        MERGE (source)-[r:`{edge_label}`]->(target)
-                        SET r.id = $edge_id, r += $properties
-                        """
-                    else:
-                        cypher = f"""
-                        MATCH (source:Node {{id: $source_id}})
-                        MATCH (target:Node {{id: $target_id}})
-                        CREATE (source)-[r:`{edge_label}` {{id: $edge_id}}]->(target)
-                        """
-                    
-                    session.run(
-                        cypher,
-                        source_id=source_id,
-                        target_id=target_id,
-                        edge_id=edge_id,
-                        properties=edge_properties if use_merge else {}
-                    )
+            for i in range(0, len(edges_list), batch_size):
+                batch = edges_list[i:i + batch_size]
+                
+                if use_merge:
+                    cypher = """
+                    UNWIND $edges AS edge
+                    MATCH (source:Node {id: edge.source})
+                    MATCH (target:Node {id: edge.target})
+                    MERGE (source)-[r:CONNECTED_TO]->(target)
+                    SET r.id = edge.id, r += edge.properties
+                    """
+                else:
+                    cypher = """
+                    UNWIND $edges AS edge
+                    MATCH (source:Node {id: edge.source})
+                    MATCH (target:Node {id: edge.target})
+                    CREATE (source)-[r:CONNECTED_TO {id: edge.id}]->(target)
+                    """
+                
+                session.run(cypher, edges=batch)
         
         logger.info(f"Graph {graph_id} {'merged' if use_merge else 'created'} in {time.time() - start_time:.2f}s with {len(graph['nodes'])} nodes and {len(graph['edges'])} edges")
         return graph_id
@@ -288,6 +285,30 @@ class Neo4jService:
             result = session.run("MATCH (g:Graph) RETURN g.id as id ORDER BY g.created DESC")
             return [record["id"] for record in result]
     
+    def delete_graph(self, graph_id: str) -> bool:
+        """
+        Delete a graph and all its connected nodes.
+        
+        Args:
+            graph_id: ID of the graph to delete.
+            
+        Returns:
+            True if deleted successfully.
+        """
+        with self.driver.session() as session:
+            # Delete all nodes connected to this graph, then the graph itself
+            result = session.run("""
+                MATCH (g:Graph {id: $graph_id})
+                OPTIONAL MATCH (g)-[:CONTAINS]->(n:Node)
+                DETACH DELETE n, g
+                RETURN count(n) as deleted_nodes
+            """, graph_id=graph_id)
+            
+            record = result.single()
+            deleted = record["deleted_nodes"] if record else 0
+            logger.info(f"Deleted graph {graph_id} with {deleted} nodes")
+            return True
+    
     def filter_graph(self, graph_id: str, node_types: List[str] = None, edge_types: List[str] = None, search_term: str = None) -> Optional[Dict[str, Any]]:
         """
         Filter a graph based on node types, edge types, and search term.
@@ -362,3 +383,82 @@ class Neo4jService:
         except Exception as e:
             logger.error(f"Query error: {e}, query: {cypher_query}, params: {params}")
             return []
+    
+    def validate_entities(
+        self, 
+        graph_id: str, 
+        ip: Optional[str] = None, 
+        port: Optional[str] = None, 
+        protocol: Optional[str] = None,
+        attack_type: Optional[str] = None
+    ) -> Dict[str, bool]:
+        """
+        Validate that entities exist in the graph before query execution.
+        
+        This prevents "confidently wrong" answers by checking if the
+        user-mentioned entities actually exist in the data.
+        
+        Args:
+            graph_id: ID of the graph to check.
+            ip: IP address to validate.
+            port: Port number to validate.
+            protocol: Protocol to validate.
+            attack_type: Attack type to validate.
+            
+        Returns:
+            Dict mapping entity keys to existence boolean.
+            Example: {"ip": True, "port": False}
+        """
+        results = {}
+        
+        with self.driver.session() as session:
+            # Validate IP
+            if ip:
+                ip_query = """
+                MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+                WHERE n.label = $ip OR n.id CONTAINS $ip OR n.label CONTAINS $ip
+                RETURN count(n) > 0 AS exists
+                """
+                result = session.run(ip_query, graph_id=graph_id, ip=str(ip))
+                record = result.single()
+                results["ip"] = record["exists"] if record else False
+            
+            # Validate Port
+            if port:
+                port_str = str(port)
+                port_query = """
+                MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+                WHERE n.type = 'Port' OR n.label CONTAINS $port OR n.port = $port
+                RETURN count(n) > 0 AS exists
+                """
+                result = session.run(port_query, graph_id=graph_id, port=port_str)
+                record = result.single()
+                results["port"] = record["exists"] if record else False
+            
+            # Validate Protocol
+            if protocol:
+                protocol_query = """
+                MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+                WHERE n.type = 'Protocol' OR toLower(n.protocol) = toLower($protocol) 
+                      OR toLower(n.label) = toLower($protocol)
+                RETURN count(n) > 0 AS exists
+                """
+                result = session.run(protocol_query, graph_id=graph_id, protocol=str(protocol))
+                record = result.single()
+                results["protocol"] = record["exists"] if record else False
+            
+            # Validate Attack Type
+            if attack_type:
+                attack_query = """
+                MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+                WHERE n.type IN ['Attack', 'AttackType'] 
+                      OR toLower(n.label) CONTAINS toLower($attack_type)
+                      OR toLower(n.attack_category) CONTAINS toLower($attack_type)
+                RETURN count(n) > 0 AS exists
+                """
+                result = session.run(attack_query, graph_id=graph_id, attack_type=str(attack_type))
+                record = result.single()
+                results["attack_type"] = record["exists"] if record else False
+        
+        logger.debug(f"Entity validation for graph {graph_id}: {results}")
+        return results

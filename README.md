@@ -1,66 +1,88 @@
 # Network Security Graph RAG
 
-A network security analysis system that uses **knowledge graphs** and **RAG** to detect threats and answer security questions.
+A network security analysis system that uses **knowledge graphs** and **RAG (Retrieval-Augmented Generation)** to detect threats and answer security questions with **grounded, explainable answers**.
+
+![Python](https://img.shields.io/badge/Python-3.9+-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green)
+![Neo4j](https://img.shields.io/badge/Neo4j-5.x-blue)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
 ## Why This Exists
 
 Traditional log analysis tools let you search. This system lets you **understand**.
 
-- **Relational queries fail** when you need "show me all IPs that talked to the same suspicious destination within 10 minutes" — that requires graph traversal
-- **ML anomaly detection alone** gives you scores, not explanations — you need context
-- **LLM chatbots hallucinate** when asked about your data — they need grounded answers from real query results
+| Problem | Solution |
+|---------|----------|
+| Relational queries fail for "show me IPs that talked to same suspicious destination" | Graph traversal makes this trivial |
+| ML anomaly detection gives scores, not explanations | Graph-native detection with full explainability |
+| LLM chatbots hallucinate about your data | Cypher-grounded RAG ensures answers come from real query results |
 
-This project combines all three: graph structure + ML detection + grounded RAG.
+This project combines: **Graph structure + ML detection + Grounded RAG**
 
 ## Architecture
 
 ```
-CSV/Logs → Parser → Neo4j Graph → Anomaly Detection → RAG Queries
-                         ↓                ↓
-                    Graph-native      Isolation Forest
-                    detection         (ML-based)
-                         ↓                ↓
-                    Explainable       Statistical
-                    anomalies         anomalies
-                         ↘            ↙
-                      Cypher-grounded RAG
-                      (NL → Intent → Template → Results → Answer)
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         NETWORK SECURITY GRAPH RAG                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────┐     ┌──────────────┐     ┌─────────────────────────────────┐  │
+│  │  CSV    │────▶│   Parser     │────▶│         Neo4j Graph             │  │
+│  │  Logs   │     │ (Auto-detect)│     │  IPs → Ports → Connections      │  │
+│  └─────────┘     └──────────────┘     └─────────────────────────────────┘  │
+│                                                     │                       │
+│                         ┌───────────────────────────┼───────────────────┐   │
+│                         ▼                           ▼                   │   │
+│              ┌─────────────────────┐    ┌─────────────────────┐         │   │
+│              │  Behavioral         │    │  ML Anomaly          │         │   │
+│              │  Detection          │    │  Detection           │         │   │
+│              │  • Port Scanners    │    │  • Isolation Forest  │         │   │
+│              │  • Recon-to-Exploit │    │  • Statistical       │         │   │
+│              │  • Multi-stage      │    │    Outliers          │         │   │
+│              └─────────────────────┘    └─────────────────────┘         │   │
+│                         │                           │                   │   │
+│                         └───────────┬───────────────┘                   │   │
+│                                     ▼                                   │   │
+│                      ┌─────────────────────────────┐                    │   │
+│                      │    Cypher-Grounded RAG      │                    │   │
+│                      │  Query → Intent → Template  │                    │   │
+│                      │  → Results → LLM Answer     │                    │   │
+│                      └─────────────────────────────┘                    │   │
+│                                                                         │   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Features
+## Key Features
 
-### Data Ingestion
-- Auto-detects CSV format (UNSW-NB15, CICIDS2017, custom)
-- Builds knowledge graph: IPs → Ports → Connections → Attacks
-- Stores in Neo4j for relationship-aware queries
+### 1. Data Ingestion (Auto-Detection)
+- **UNSW-NB15** - Raw and preprocessed formats
+- **CICIDS2017** - Full dataset support
+- **Custom CSVs** - Flexible column mapping
+- Unified `network_security` graph with MERGE semantics (no duplicates)
 
-### Anomaly Detection (Hybrid Approach)
+### 2. Behavioral Threat Detection
 
-**ML-based (Isolation Forest):**
-- Statistical outlier detection on per-connection features
-- Scores based on: port rarity, time of day, bytes transferred
+| Detection Type | What It Finds | Cypher Pattern |
+|----------------|---------------|----------------|
+| **Port Scanners** | IPs accessing >5 distinct ports | Connection fan-out analysis |
+| **Reconnaissance** | Multi-port access patterns | Port diversity ratio |
+| **Multi-Stage Attackers** | High ports AND high volume | Combined AND logic |
+| **Recon-to-Exploit** | Broad scan + focused targeting | Port concentration ratio ≥0.6 |
+| **High Volume** | Connection flooding | Connections >50 threshold |
 
-**Graph-native:**
-| Detection | What it finds | How |
-|-----------|--------------|-----|
-| Degree spike | Lateral movement | IP with connections > mean + 2σ |
-| Fan-out | Port scanning | Single IP → multiple ports on same target |
-| Protocol rarity | Covert channels | Protocols used in <1% of traffic |
-| Suspicious ports | Known malware | Connections to 4444, 31337, etc. |
-
-Each anomaly includes **full explainability**:
+Each detection is **fully explainable**:
 ```json
 {
-  "anomaly_type": "degree_spike",
-  "entity": "10.0.0.5",
-  "confidence_score": 0.87,
-  "baseline": 12.3,
-  "observed": 47,
-  "reason": "IP has 47 outgoing connections, significantly above graph average of 12.3"
+  "ip_address": "59.166.0.7",
+  "ports_accessed": 10,
+  "total_connections": 11,
+  "severity": "High",
+  "anomaly_type": "Multi-port Access",
+  "threat_pattern": "Recon-to-Exploit"
 }
 ```
 
-### RAG Queries (Cypher-Grounded)
+### 3. Cypher-Grounded RAG
 
 **Not free-form LLM generation.** The system uses template-constrained Cypher:
 
@@ -69,21 +91,32 @@ Each anomaly includes **full explainability**:
 3. Query executes against Neo4j
 4. LLM answers **only from actual results**
 
-Supported query types:
-- `attacks_detected` - "What attacks were found?"
-- `ip_connections` - "Show connections for 192.168.1.10"
-- `anomalies` - "What anomalies were detected?"
-- `top_talkers` - "Which IPs have most traffic?"
-- `suspicious_ips` - "Show suspicious entities"
+**Supported Intents:**
+- `attacks_detected` - Behavioral threat inference
+- `ip_connections` - Specific IP analysis
+- `anomalies` - Behavioral anomaly detection
+- `top_talkers` - Most active IPs
+- `port_scanners` - Port scanning detection
+- `multi_stage_attackers` - Combined attack patterns
+- `exploit_preparation` - Recon-to-exploit detection
+- `suspicious_ips` - Pattern-based suspicious IP detection
 
 ## Quick Start
 
+### Prerequisites
+- Docker & Docker Compose
+- Groq API key (free tier available)
+
+### Installation
+
 ```bash
-# Clone and configure
+# Clone repository
 git clone https://github.com/Sagar4276/Knowledge-Graph-RAG.git
 cd Knowledge-Graph-RAG
+
+# Configure environment
 cp .env.example .env
-# Add your GROQ_API_KEY to .env
+# Edit .env and add your GROQ_API_KEY
 
 # Start services
 docker compose up -d
@@ -92,52 +125,68 @@ docker compose up -d
 curl http://localhost:8000/health
 ```
 
-### Ingesting Data
+### Upload Data
 
 ```bash
-# Upload a CSV (auto-detects format)
+# Upload CSV (auto-detects format)
 curl -X POST http://localhost:8000/api/network/upload-csv \
-  -F "file=@your_traffic.csv"
-
-# Response includes graph_id for queries
+  -F "file=@UNSW_NB15_training-set.csv"
 ```
 
-### Querying
+### Query the Graph
 
+**Using the dedicated network query endpoint (recommended):**
 ```bash
-# Ask a question (grounded in actual data)
-curl -X POST http://localhost:8000/api/query \
+curl -X POST http://localhost:8000/api/network/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "What attacks were detected?", "graph_id": "network_security"}'
+  -d '{"query": "What attacks were detected?"}'
+```
 
-# Get full analysis with graph anomalies
-curl http://localhost:8000/api/network/analyze/network_security
+**Example Queries:**
+```json
+{"query": "Show me port scanning activity"}
+{"query": "Which IPs are suspicious?"}
+{"query": "What anomalies were detected in the network?"}
+{"query": "Which IPs show both port scanning and high connection volume?"}
+```
+
+**Sample Response:**
+```json
+{
+  "answer": "Two types of attacks were detected: Reconnaissance (13 IPs including 59.166.0.0) and High Volume Traffic (10 IPs including 149.171.126.8).",
+  "intent": "attacks_detected",
+  "confidence_score": 0.9,
+  "query_results_count": 2,
+  "grounding_context": "Results from Neo4j: ..."
+}
 ```
 
 ## API Reference
 
-### Core Endpoints
+### Network Security Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/network/upload-csv` | POST | Upload CSV, auto-process |
-| `/api/network/analyze/{graph_id}` | GET | Full security analysis with graph anomalies |
-| `/api/query` | POST | Cypher-grounded RAG query |
-| `/api/network/anomalies/{graph_id}` | GET | Anomaly report |
+| `/api/network/upload-csv` | POST | Upload and process CSV file |
+| `/api/network/query` | POST | Grounded RAG query (recommended) |
 | `/api/network/stats/{graph_id}` | GET | Network statistics |
+| `/api/network/anomalies/{graph_id}` | GET | Anomaly report |
+| `/api/network/analyze/{graph_id}` | GET | Full security analysis |
+| `/api/network/summary/{graph_id}` | GET | Security summary |
+| `/api/network/cleanup` | DELETE | Remove old graphs (keep network_security) |
+| `/api/network/reset` | DELETE | Delete all graphs |
 
-### Query Response Format
+### Graph Endpoints
 
-```json
-{
-  "answer": "The graph contains 3 attack types: DoS, Reconnaissance, and Generic...",
-  "intent": "attacks_detected",
-  "entities_extracted": {},
-  "query_results_count": 3,
-  "cypher_template_used": "MATCH (g:Graph {id: $graph_id})...",
-  "grounding_context": "Query type: attacks_detected\nResults: ..."
-}
-```
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/graphs` | GET | List all graphs |
+| `/api/graphs/{graph_id}` | GET | Get specific graph |
+| `/api/query` | POST | Generic RAG query |
+
+### Swagger Documentation
+
+Access interactive API docs at: `http://localhost:8000/api/docs`
 
 ## Configuration
 
@@ -148,51 +197,72 @@ curl http://localhost:8000/api/network/analyze/network_security
 | `NEO4J_URI` | Neo4j connection | `bolt://neo4j:7687` |
 | `NEO4J_PASSWORD` | Neo4j password | `password` |
 
-## Limitations
+## Project Structure
 
-This section is deliberately honest about what this system **cannot** do.
+```
+Knowledge-Graph-RAG/
+├── backend/
+│   ├── app/
+│   │   ├── api/routes/
+│   │   │   ├── network.py      # Network security endpoints
+│   │   │   ├── query.py        # RAG query endpoints
+│   │   │   └── graph.py        # Graph operations
+│   │   ├── services/
+│   │   │   ├── neo4j_service.py          # Neo4j operations
+│   │   │   ├── cypher_query_service.py   # Grounded RAG
+│   │   │   ├── auto_processor.py         # CSV parsing
+│   │   │   ├── anomaly_detector.py       # ML detection
+│   │   │   └── network_parser.py         # Log parsing
+│   │   └── models/              # Pydantic models
+│   ├── tests/                   # Test files
+│   └── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
 
-### Detection Gaps
+## Limitations (Honest Assessment)
 
-| Limitation | Why it matters |
-|------------|----------------|
-| **Encrypted traffic blind spot** | Deep packet inspection isn't supported — only metadata (IPs, ports, bytes) |
-| **No real-time streaming** | Batch processing only; not suitable for live SOC integration |
-| **Dataset bias** | Trained/tested on UNSW-NB15 and CICIDS2017 — may not generalize to your network |
-| **Static attack signatures** | Novel attacks won't match known attack types |
+### What This System Cannot Do
 
-### ML Caveats
-
-| Caveat | Mitigation |
-|--------|------------|
-| **Isolation Forest false positives** | Combined with graph-native detection for better accuracy |
-| **No temporal awareness** | Beaconing detection not yet implemented |
-| **Cold start problem** | Per-graph baselines help, but small datasets produce noisy thresholds |
-
-### RAG Limitations
-
-| Limitation | How we handle it |
-|------------|------------------|
-| **Fixed query templates** | 10 intent types cover most security questions; extend as needed |
-| **No multi-hop reasoning** | Complex attack chains require multiple queries |
-| **LLM context limits** | Results capped at 20 rows to stay within token budget |
+| Limitation | Reason |
+|------------|--------|
+| **Encrypted traffic analysis** | Only metadata (IPs, ports, bytes) is analyzed |
+| **Real-time streaming** | Batch processing only |
+| **Dataset generalization** | Tested on UNSW-NB15/CICIDS2017 |
+| **Novel attack detection** | No zero-day capability |
 
 ### What This Is NOT
 
 - ❌ A replacement for a SIEM
 - ❌ Real-time threat detection
-- ❌ Suitable for production SOC without additional hardening
+- ❌ Production SOC-ready (without hardening)
 - ❌ Trained on your specific network baseline
 
-## Comparison: Why Graph?
+### What This IS
 
-| Approach | IP scanned 50 ports? | IP talked to 3 IPs that also hit same C2? |
-|----------|---------------------|-------------------------------------------|
-| Log search (Splunk) | ✅ Easy | ❌ Hard (requires joins) |
-| Relational DB | ✅ Possible | ⚠️ Complex multi-joins |
-| **Graph DB** | ✅ Trivial | ✅ Single traversal |
+- ✅ Graph-based network analysis
+- ✅ Behavioral pattern detection
+- ✅ Explainable threat detection
+- ✅ Grounded RAG (no hallucination)
+- ✅ Educational/research tool
+- ✅ Interview-ready project
 
-Graph databases excel at **relationship-heavy queries** — exactly what security analysis needs.
+## Why Graph Database?
+
+| Query Type | Log Search | SQL | **Graph** |
+|------------|-----------|-----|-----------|
+| "IP scanned 50 ports?" | ✅ Easy | ✅ Easy | ✅ Easy |
+| "IP talked to 3 IPs that hit same C2?" | ❌ Hard | ⚠️ Complex joins | ✅ Single traversal |
+| "Attack chain visualization?" | ❌ No | ❌ Complex | ✅ Native |
+
+## Tech Stack
+
+- **FastAPI** - Async Python API framework
+- **Neo4j** - Native graph database
+- **Groq** - Fast LLM inference (Llama 3.3 70B)
+- **scikit-learn** - Isolation Forest for ML anomaly detection
+- **Docker** - Containerization
 
 ## Testing
 
@@ -202,16 +272,19 @@ pip install -r requirements.txt
 pytest tests/
 ```
 
-Note: Automated test coverage is limited. Focus was on correctness of graph construction and query grounding.
+## Contributing
 
-## Tech Stack
-
-- **FastAPI** - API framework
-- **Neo4j** - Graph database
-- **Groq** - LLM inference (Llama 3.3 70B)
-- **scikit-learn** - Isolation Forest
-- **Docker** - Containerization
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- UNSW-NB15 dataset: [UNSW Sydney](https://research.unsw.edu.au/projects/unsw-nb15-dataset)
+- CICIDS2017 dataset: [Canadian Institute for Cybersecurity](https://www.unb.ca/cic/datasets/ids-2017.html)

@@ -1,0 +1,1049 @@
+{
+    "info": {
+        "name": "Network Security Graph RAG - Complete Test Suite",
+        "description": "Comprehensive test collection for all backend API endpoints with validation scripts",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:8000",
+            "type": "string"
+        },
+        {
+            "key": "graph_id",
+            "value": "network_security",
+            "type": "string"
+        }
+    ],
+    "item": [
+        {
+            "name": "1. Health & Prerequisites",
+            "item": [
+                {
+                    "name": "1.1 Health Check - Success",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "// Test 1: Status code should be 200",
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "// Test 2: Response has required fields",
+                                    "pm.test('Response has required fields', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('status');",
+                                    "    pm.expect(json).to.have.property('version');",
+                                    "    pm.expect(json).to.have.property('database');",
+                                    "});",
+                                    "",
+                                    "// Test 3: Status is healthy",
+                                    "pm.test('Status is healthy', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.status).to.eql('healthy');",
+                                    "});",
+                                    "",
+                                    "// Test 4: Database is connected",
+                                    "pm.test('Database is connected', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.database).to.eql('connected');",
+                                    "});",
+                                    "",
+                                    "// Test 5: Response time is acceptable",
+                                    "pm.test('Response time is less than 2000ms', function() {",
+                                    "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/health"
+                    }
+                },
+                {
+                    "name": "1.2 API Docs Available",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Swagger docs accessible', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/docs"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "2. Data Ingestion",
+            "item": [
+                {
+                    "name": "2.1 Upload CSV - Success (UNSW-NB15)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "// Test 1: Status code is 200",
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "// Test 2: Response has graph_id",
+                                    "pm.test('Response has graph_id', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('graph_id');",
+                                    "    pm.collectionVariables.set('graph_id', json.graph_id);",
+                                    "});",
+                                    "",
+                                    "// Test 3: Response has status success",
+                                    "pm.test('Status is success', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.status).to.eql('success');",
+                                    "});",
+                                    "",
+                                    "// Test 4: Response has message",
+                                    "pm.test('Response has message', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('message');",
+                                    "    pm.expect(json.message).to.include('processed');",
+                                    "});",
+                                    "",
+                                    "// Test 5: Response has format_detected",
+                                    "pm.test('Response has format_detected', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('format_detected');",
+                                    "});",
+                                    "",
+                                    "// Test 6: Response has processing_time",
+                                    "pm.test('Response has processing_time (number)', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('processing_time');",
+                                    "    pm.expect(typeof json.processing_time).to.eql('number');",
+                                    "});",
+                                    "",
+                                    "// Test 7: Response has stats object",
+                                    "pm.test('Response has stats object with required fields', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('stats');",
+                                    "    pm.expect(json.stats).to.have.property('total_nodes');",
+                                    "    pm.expect(json.stats).to.have.property('total_edges');",
+                                    "    pm.expect(json.stats).to.have.property('total_ips');",
+                                    "});",
+                                    "",
+                                    "// Test 8: Response has processing_summary",
+                                    "pm.test('Response has processing_summary', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('processing_summary');",
+                                    "    pm.expect(json.processing_summary).to.have.property('valid_connections');",
+                                    "});",
+                                    "",
+                                    "// Test 9: Response has security_analysis",
+                                    "pm.test('Response has security_analysis', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('security_analysis');",
+                                    "    pm.expect(json.security_analysis).to.have.property('anomalies_detected');",
+                                    "});",
+                                    "",
+                                    "// Test 10: Processing time is reasonable",
+                                    "pm.test('Processing completed in under 60 seconds', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.processing_time).to.be.below(60);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/network/upload-csv?max_rows=1000",
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": "",
+                                    "description": "Select your UNSW-NB15 CSV file"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "2.2 Upload CSV - Invalid File Type (400)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 400', function() {",
+                                    "    pm.response.to.have.status(400);",
+                                    "});",
+                                    "",
+                                    "pm.test('Error message mentions file format', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.detail.toLowerCase()).to.include('csv');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/network/upload-csv",
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": "",
+                                    "description": "Select a .txt or .json file to test invalid format"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "2.3 Manual JSON Ingestion",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has graph_id', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('graph_id');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has total_connections', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('total_connections');",
+                                    "    pm.expect(json.total_connections).to.be.above(0);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has nodes array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('nodes');",
+                                    "    pm.expect(json.nodes).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has edges array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('edges');",
+                                    "    pm.expect(json.edges).to.be.an('array');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/network/ingest",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"logs\": [\n    {\n      \"timestamp\": \"2024-01-15 10:30:00\",\n      \"source_ip\": \"192.168.1.100\",\n      \"dest_ip\": \"8.8.8.8\",\n      \"dest_port\": 443,\n      \"protocol\": \"TCP\",\n      \"bytes_sent\": 1500,\n      \"bytes_received\": 3000,\n      \"action\": \"allow\"\n    },\n    {\n      \"timestamp\": \"2024-01-15 10:30:05\",\n      \"source_ip\": \"192.168.1.100\",\n      \"dest_ip\": \"185.220.101.1\",\n      \"dest_port\": 4444,\n      \"protocol\": \"TCP\",\n      \"bytes_sent\": 50000,\n      \"bytes_received\": 100,\n      \"action\": \"deny\"\n    },\n    {\n      \"timestamp\": \"2024-01-15 10:30:10\",\n      \"source_ip\": \"10.0.0.5\",\n      \"dest_ip\": \"192.168.1.100\",\n      \"dest_port\": 22,\n      \"protocol\": \"TCP\",\n      \"bytes_sent\": 500,\n      \"bytes_received\": 1000,\n      \"action\": \"allow\"\n    }\n  ]\n}"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "3. Graph Queries",
+            "item": [
+                {
+                    "name": "3.1 List Available Graphs",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response is an array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Array contains graph IDs (if any)', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.length > 0) {",
+                                    "        pm.expect(typeof json[0]).to.eql('string');",
+                                    "        // Store first graph_id for subsequent tests",
+                                    "        pm.collectionVariables.set('graph_id', json[0]);",
+                                    "    }",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/graphs"
+                    }
+                },
+                {
+                    "name": "3.2 Get Graph Data",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has graph_id', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('graph_id');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has nodes array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('nodes');",
+                                    "    pm.expect(json.nodes).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has edges array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('edges');",
+                                    "    pm.expect(json.edges).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Nodes have required structure', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.nodes.length > 0) {",
+                                    "        const node = json.nodes[0];",
+                                    "        pm.expect(node).to.have.property('data');",
+                                    "        pm.expect(node.data).to.have.property('id');",
+                                    "        pm.expect(node.data).to.have.property('label');",
+                                    "        pm.expect(node.data).to.have.property('type');",
+                                    "    }",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/graphs/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "3.3 Get Graph - Not Found (404)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 404', function() {",
+                                    "    pm.response.to.have.status(404);",
+                                    "});",
+                                    "",
+                                    "pm.test('Error message mentions not found', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.detail.toLowerCase()).to.include('not found');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/graphs/nonexistent_graph_12345"
+                    }
+                },
+                {
+                    "name": "3.4 Get Network Statistics",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has graph_id', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('graph_id');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has total_nodes (number)', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('total_nodes');",
+                                    "    pm.expect(typeof json.total_nodes).to.eql('number');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has total_edges (number)', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('total_edges');",
+                                    "    pm.expect(typeof json.total_edges).to.eql('number');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has top_talkers array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('top_talkers');",
+                                    "    pm.expect(json.top_talkers).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has protocol_distribution', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('protocol_distribution');",
+                                    "    pm.expect(json.protocol_distribution).to.be.an('object');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has attack_breakdown', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('attack_breakdown');",
+                                    "    pm.expect(json.attack_breakdown).to.be.an('object');",
+                                    "});",
+                                    "",
+                                    "pm.test('Top talkers have correct structure', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.top_talkers.length > 0) {",
+                                    "        const talker = json.top_talkers[0];",
+                                    "        pm.expect(talker).to.have.property('ip');",
+                                    "        pm.expect(talker).to.have.property('connections');",
+                                    "    }",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/stats/{{graph_id}}"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "4. Anomaly Detection",
+            "item": [
+                {
+                    "name": "4.1 Get ML-Based Anomalies",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has graph_id', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('graph_id');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has anomalies_detected (number)', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('anomalies_detected');",
+                                    "    pm.expect(typeof json.anomalies_detected).to.eql('number');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has anomaly_rate', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('anomaly_rate');",
+                                    "    pm.expect(json.anomaly_rate).to.be.at.least(0);",
+                                    "    pm.expect(json.anomaly_rate).to.be.at.most(1);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has threshold', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('threshold');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has anomaly_distribution', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('anomaly_distribution');",
+                                    "    pm.expect(json.anomaly_distribution).to.have.property('normal');",
+                                    "    pm.expect(json.anomaly_distribution).to.have.property('suspicious');",
+                                    "    pm.expect(json.anomaly_distribution).to.have.property('critical');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has top_anomalies array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('top_anomalies');",
+                                    "    pm.expect(json.top_anomalies).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has summary string', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('summary');",
+                                    "    pm.expect(typeof json.summary).to.eql('string');",
+                                    "});",
+                                    "",
+                                    "pm.test('Top anomalies have required structure', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.top_anomalies && json.top_anomalies.length > 0) {",
+                                    "        const anomaly = json.top_anomalies[0];",
+                                    "        pm.expect(anomaly).to.have.property('srcip');",
+                                    "        pm.expect(anomaly).to.have.property('anomaly_score');",
+                                    "        pm.expect(anomaly).to.have.property('reason');",
+                                    "    }",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/anomalies/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "4.2 Full Graph Analysis (ML + Graph-Native)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has graph_id', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('graph_id');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has analysis object', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('analysis');",
+                                    "    pm.expect(json.analysis).to.have.property('total_nodes');",
+                                    "    pm.expect(json.analysis).to.have.property('total_edges');",
+                                    "    pm.expect(json.analysis).to.have.property('attack_types_found');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has graph_anomalies', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('graph_anomalies');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has security_summary', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('security_summary');",
+                                    "    pm.expect(json.security_summary).to.have.property('threat_level');",
+                                    "    pm.expect(json.security_summary).to.have.property('risk_level');",
+                                    "});",
+                                    "",
+                                    "pm.test('Attack types is an array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.analysis.attack_types_found).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Threat level is valid', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    const validLevels = ['low', 'medium', 'high'];",
+                                    "    pm.expect(validLevels).to.include(json.security_summary.threat_level);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/analyze/{{graph_id}}"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "5. RAG Query System",
+            "item": [
+                {
+                    "name": "5.1 Query - Attacks Detected",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has answer', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('answer');",
+                                    "    pm.expect(json.answer.length).to.be.above(0);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has intent', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('intent');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has confidence_score', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('confidence_score');",
+                                    "    pm.expect(json.confidence_score).to.be.at.least(0);",
+                                    "    pm.expect(json.confidence_score).to.be.at.most(1);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has execution_time_ms', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('execution_time_ms');",
+                                    "    pm.expect(typeof json.execution_time_ms).to.eql('number');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has query_results_count', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('query_results_count');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has validation_warnings array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('validation_warnings');",
+                                    "    pm.expect(json.validation_warnings).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Execution time is under 10 seconds', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.execution_time_ms).to.be.below(10000);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"What attacks were detected?\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "5.2 Query - IP Connections",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Intent is ip_connections', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.intent).to.eql('ip_connections');",
+                                    "});",
+                                    "",
+                                    "pm.test('Entities extracted contains IP', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('entities_extracted');",
+                                    "    pm.expect(json.entities_extracted).to.have.property('ip');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"What connections did 192.168.1.100 make?\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "5.3 Query - Non-existent Entity (Grounding Test)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Has validation_warnings for missing entity', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    // Should have warnings about entity not found",
+                                    "    const hasWarning = json.validation_warnings.length > 0 ||",
+                                    "                       json.answer.toLowerCase().includes('not found') ||",
+                                    "                       json.query_results_count === 0;",
+                                    "    pm.expect(hasWarning).to.be.true;",
+                                    "});",
+                                    "",
+                                    "pm.test('Does not hallucinate data', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    // Answer should acknowledge no data or mention not found",
+                                    "    const isGrounded = json.answer.toLowerCase().includes('not found') ||",
+                                    "                       json.answer.toLowerCase().includes('no data') ||",
+                                    "                       json.answer.toLowerCase().includes('no connections') ||",
+                                    "                       json.validation_warnings.length > 0;",
+                                    "    pm.expect(isGrounded).to.be.true;",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"What connections did 99.99.99.99 make?\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "5.4 Query - Anomalies",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Intent is anomalies', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.intent).to.eql('anomalies');",
+                                    "});",
+                                    "",
+                                    "pm.test('Has grounding_context', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('grounding_context');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"What anomalies were detected?\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "5.5 Query - Top Talkers",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Intent is top_talkers', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.intent).to.eql('top_talkers');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"Which IPs have the most connections?\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "5.6 Query - Port Analysis",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Intent is port_analysis', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.intent).to.eql('port_analysis');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"What ports are being used the most?\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "5.7 Query - Suspicious IPs",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Intent is suspicious_ips', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json.intent).to.eql('suspicious_ips');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"Which IPs are suspicious?\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "6. Data Quality",
+            "item": [
+                {
+                    "name": "6.1 Security Summary with Data Quality",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has graph_id', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('graph_id');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has network_overview', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('network_overview');",
+                                    "    pm.expect(json.network_overview).to.have.property('total_nodes');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has security_findings', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('security_findings');",
+                                    "    pm.expect(json.security_findings).to.have.property('threat_level');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has data_quality', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('data_quality');",
+                                    "    pm.expect(json.data_quality).to.have.property('valid_connections');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has warnings array', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('warnings');",
+                                    "    pm.expect(json.warnings).to.be.an('array');",
+                                    "});",
+                                    "",
+                                    "pm.test('Response has summary_text', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('summary_text');",
+                                    "    pm.expect(typeof json.summary_text).to.eql('string');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/summary/{{graph_id}}"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "7. Performance Tests",
+            "item": [
+                {
+                    "name": "7.1 Stats Endpoint Performance",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Response time is under 5000ms', function() {",
+                                    "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+                                    "});",
+                                    "",
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/stats/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "7.2 Analyze Endpoint Performance",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Response time is under 10000ms', function() {",
+                                    "    pm.expect(pm.response.responseTime).to.be.below(10000);",
+                                    "});",
+                                    "",
+                                    "pm.test('Status code is 200', function() {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "url": "{{base_url}}/api/network/analyze/{{graph_id}}"
+                    }
+                },
+                {
+                    "name": "7.3 RAG Query Performance",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Response time is under 15000ms', function() {",
+                                    "    pm.expect(pm.response.responseTime).to.be.below(15000);",
+                                    "});",
+                                    "",
+                                    "pm.test('Internal execution_time_ms logged', function() {",
+                                    "    const json = pm.response.json();",
+                                    "    pm.expect(json).to.have.property('execution_time_ms');",
+                                    "    console.log('Internal execution time: ' + json.execution_time_ms + 'ms');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "url": "{{base_url}}/api/query",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"Summarize all security findings\",\n  \"graph_id\": \"{{graph_id}}\"\n}"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

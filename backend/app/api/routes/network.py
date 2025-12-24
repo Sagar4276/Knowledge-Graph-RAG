@@ -149,13 +149,44 @@ async def get_anomalies(graph_id: str):
         total = count_result[0]["total"] if count_result else 0
         
         anomaly_count = len(anomalies)
+        anomaly_rate = (anomaly_count / total) if total > 0 else 0
+        anomaly_percentage = anomaly_rate * 100
+        
+        # Calculate distribution by score bands
+        normal_count = sum(1 for a in anomalies if a["anomaly_score"] < 0)
+        suspicious_count = sum(1 for a in anomalies if 0 <= a["anomaly_score"] < 0.5)
+        critical_count = sum(1 for a in anomalies if a["anomaly_score"] >= 0.5)
+        
+        anomaly_distribution = {
+            "normal": total - anomaly_count,  # Non-anomalous nodes
+            "suspicious": suspicious_count,
+            "critical": critical_count
+        }
+        
+        # Format top anomalies with detailed info
+        top_anomalies = []
+        for a in anomalies[:10]:
+            top_anomalies.append({
+                "connection_id": f"ip_{a.get('ip', 'unknown').replace('.', '_')}",
+                "srcip": a.get("ip"),
+                "anomaly_score": a.get("anomaly_score", 0),
+                "features": {
+                    "connection_count": a.get("connection_count", 0),
+                    "anomaly_types": a.get("anomaly_types", [])
+                },
+                "reason": f"Anomalous activity detected: {', '.join(a.get('anomaly_types', ['unknown']))}" if a.get('anomaly_types') else "Anomaly detected by ML model"
+            })
         
         return AnomalyReport(
             graph_id=graph_id,
             total_connections=total,
             anomalies_detected=anomaly_count,
-            anomaly_percentage=(anomaly_count / total * 100) if total > 0 else 0,
+            anomaly_percentage=round(anomaly_percentage, 2),
+            anomaly_rate=round(anomaly_rate, 4),
+            threshold=-0.1,  # Isolation Forest default threshold
+            anomaly_distribution=anomaly_distribution,
             anomalies=anomalies,
+            top_anomalies=top_anomalies,
             top_suspicious_ips=anomalies[:10],
             summary=f"Detected {anomaly_count} anomalous IPs out of {total} total IPs. Top threat: {anomalies[0]['ip'] if anomalies else 'None'} (score: {anomalies[0]['anomaly_score']:.2f})" if anomalies else f"No anomalies detected in {total} IPs"
         )
@@ -330,15 +361,67 @@ async def get_network_stats(graph_id: str):
         anomaly_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=anomaly_query)
         anomaly_stats = anomaly_result[0] if anomaly_result else {}
         
+        # Get top talkers (IPs with most connections)
+        top_talkers_query = """
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+        WHERE n.type IN ['InternalIP', 'ExternalIP'] OR n.label =~ '\\\\d+\\\\.\\\\d+\\\\.\\\\d+\\\\.\\\\d+'
+        OPTIONAL MATCH (n)-[r:CONNECTED_TO]->()
+        WITH n, count(r) AS conn_count
+        WHERE conn_count > 0
+        RETURN n.label AS ip, conn_count AS connections
+        ORDER BY conn_count DESC
+        LIMIT 10
+        """
+        top_talkers_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=top_talkers_query)
+        top_talkers = [{"ip": r["ip"], "connections": r["connections"]} for r in top_talkers_result] if top_talkers_result else []
+        
+        # Get protocol distribution from edge properties
+        protocol_query = """
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)-[r:CONNECTED_TO]->(m:Node)
+        WITH COALESCE(r.protocol, 'unknown') AS proto
+        RETURN proto AS protocol, count(*) AS count
+        ORDER BY count DESC
+        """
+        protocol_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=protocol_query)
+        protocol_distribution = {r["protocol"]: r["count"] for r in protocol_result} if protocol_result else {}
+        
+        # Get service distribution from port nodes
+        service_query = """
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(p:Node)
+        WHERE p.type = 'Port'
+        WITH COALESCE(p.service, 'other') AS svc
+        RETURN svc AS service, count(*) AS count
+        ORDER BY count DESC
+        LIMIT 20
+        """
+        service_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=service_query)
+        service_distribution = {r["service"]: r["count"] for r in service_result} if service_result else {}
+        
+        # Get attack breakdown from AttackType nodes
+        attack_query = """
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(a:Node)
+        WHERE a.type = 'AttackType' OR a.label CONTAINS 'Attack'
+        OPTIONAL MATCH (ip)-[r:INVOLVED_IN]->(a)
+        RETURN a.label AS attack_type, count(r) AS count
+        ORDER BY count DESC
+        """
+        attack_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=attack_query)
+        attack_breakdown = {r["attack_type"]: r["count"] for r in attack_result} if attack_result else {}
+        
         return {
             "graph_id": graph_id,
             "total_nodes": stats.get("total_nodes", 0),
+            "total_edges": total_edges,
             "internal_ips": stats.get("internal_ips", 0),
             "external_ips": stats.get("external_ips", 0),
             "unique_ports": stats.get("unique_ports", 0),
             "total_connections": total_edges,
             "anomaly_count": anomaly_stats.get("anomaly_count", 0),
             "avg_anomaly_score": round(anomaly_stats.get("avg_score", 0) or 0, 3),
+            "top_talkers": top_talkers,
+            "protocol_distribution": protocol_distribution,
+            "service_distribution": service_distribution,
+            "attack_breakdown": attack_breakdown
         }
         
     except HTTPException:
@@ -373,18 +456,50 @@ async def upload_and_process_csv(
     
     Returns complete analysis results including graph_id for further queries.
     """
+    # Maximum file size: 500MB
+    MAX_FILE_SIZE = 500 * 1024 * 1024
+    
     try:
-        if not file.filename.endswith('.csv'):
-            raise HTTPException(status_code=400, detail="Only CSV files are supported")
+        # Validate file extension
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+            
+        if not file.filename.lower().endswith('.csv'):
+            raise HTTPException(status_code=400, detail="Invalid file format. Only CSV files are supported.")
         
         logger.info(f"Received CSV upload: {file.filename}")
         
+        # Read file content to check size and emptiness
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail="File is empty")
+        
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413, 
+                detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024*1024)}MB"
+            )
+        
+        # Reset file pointer for processing
+        await file.seek(0)
+        
         # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
-            shutil.copyfileobj(file.file, tmp)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv', mode='wb') as tmp:
+            tmp.write(file_content)
             tmp_path = tmp.name
         
         try:
+            # Check if file has data rows
+            with open(tmp_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                lines = f.readlines()
+                if len(lines) <= 1:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="No data rows found. File contains only headers or is empty."
+                    )
+            
             # Process the uploaded CSV
             processor = AutoProcessor(neo4j_service)
             result = processor.process_csv(tmp_path, max_rows=max_rows)
@@ -398,8 +513,15 @@ async def upload_and_process_csv(
         
     except HTTPException:
         raise
+    except ValueError as e:
+        import traceback
+        logger.error(f"Validation error processing CSV: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Missing required columns: {str(e)}")
     except Exception as e:
+        import traceback
         logger.error(f"Error processing uploaded CSV: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error processing CSV: {str(e)}")
 
 
@@ -526,6 +648,33 @@ async def get_security_summary(graph_id: str):
         # Get anomaly report
         anomaly_response = await get_anomalies(graph_id)
         
+        # Query for data quality metrics
+        quality_query = """
+        MATCH (g:Graph {id: $graph_id})-[:CONTAINS]->(n:Node)
+        WITH n,
+             CASE WHEN n.label IS NULL OR n.label = '' THEN 1 ELSE 0 END AS invalid,
+             CASE WHEN n.type = 'Port' AND NOT EXISTS((n)<-[:USES_PORT]-()) THEN 1 ELSE 0 END AS orphaned
+        RETURN 
+            count(n) AS total,
+            sum(invalid) AS invalid_nodes,
+            sum(orphaned) AS orphaned_nodes
+        """
+        quality_result = neo4j_service.query_graph(graph_id=graph_id, cypher_query=quality_query)
+        quality_stats = quality_result[0] if quality_result else {}
+        
+        # Calculate data quality metrics
+        total_nodes = quality_stats.get("total", 0)
+        invalid_nodes = quality_stats.get("invalid_nodes", 0)
+        orphaned_nodes = quality_stats.get("orphaned_nodes", 0)
+        
+        # Build warnings list
+        warnings = []
+        if total_nodes > 0:
+            if invalid_nodes > 0:
+                warnings.append(f"{invalid_nodes} nodes have invalid or missing labels")
+            if orphaned_nodes > 0 and orphaned_nodes / total_nodes > 0.1:
+                warnings.append(f"{orphaned_nodes} nodes have no connections (orphaned)")
+        
         return {
             "graph_id": graph_id,
             "network_overview": {
@@ -542,6 +691,13 @@ async def get_security_summary(graph_id: str):
                 "anomalies_detected": anomaly_response.anomalies_detected,
                 "anomaly_percentage": anomaly_response.anomaly_percentage,
             },
+            "data_quality": {
+                "valid_connections": stats_response.get("total_connections", 0),
+                "invalid_nodes": invalid_nodes,
+                "orphaned_nodes": orphaned_nodes,
+                "total_nodes": total_nodes
+            },
+            "warnings": warnings,
             "summary_text": _generate_summary_text(analysis, anomaly_response)
         }
         
@@ -670,3 +826,133 @@ async def get_graph_correlations(graph_id: str):
     except Exception as e:
         logger.error(f"Error finding correlations: {e}")
         raise HTTPException(status_code=500, detail=f"Error finding correlations: {str(e)}")
+
+
+@router.post("/network/query")
+async def query_network_security(query_input: dict):
+    """
+    Query the network security graph using grounded RAG.
+    
+    This endpoint uses Cypher-grounded RAG to answer questions about the ingested
+    network data. Answers are based on REAL data from Neo4j, not LLM synthesis.
+    
+    Request body:
+    - query: The natural language question (required)
+    - graph_id: Graph ID to query (optional, defaults to "network_security")
+    
+    Example queries:
+    - "What attacks were detected?"
+    - "Show me port scanning activity"
+    - "Which IPs have high anomaly scores?"
+    - "What are the top talkers?"
+    """
+    from app.services.cypher_query_service import query_with_grounding
+    
+    try:
+        query = query_input.get("query") or query_input.get("text")
+        if not query:
+            raise HTTPException(status_code=400, detail="Query text is required")
+        
+        graph_id = query_input.get("graph_id", "network_security")
+        
+        # Check if graph exists
+        graph = neo4j_service.get_graph(graph_id)
+        if not graph:
+            # Try to list available graphs
+            available = neo4j_service.list_graphs()
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Graph '{graph_id}' not found. Available graphs: {[g['id'] for g in available]}"
+            )
+        
+        logger.info(f"Processing network security query: '{query}' for graph {graph_id}")
+        
+        # Execute grounded query
+        result = query_with_grounding(
+            question=query,
+            neo4j_service=neo4j_service,
+            graph_id=graph_id
+        )
+        
+        logger.info(f"Query result - Intent: {result.get('intent')}, Results: {result.get('query_results_count')}")
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error in network query: {e}")
+        raise HTTPException(status_code=500, detail=f"Error querying network data: {str(e)}")
+
+
+@router.delete("/network/cleanup")
+async def cleanup_old_graphs(keep_network_security: bool = True):
+    """
+    Delete old UUID-based graphs created before the unified graph approach.
+    
+    By default, keeps the 'network_security' graph and deletes all others.
+    
+    Args:
+        keep_network_security: If True, keeps the unified network_security graph
+    """
+    try:
+        # Get all graphs (returns list of strings)
+        all_graphs = neo4j_service.list_graphs()
+        
+        graphs_to_delete = []
+        for graph_id in all_graphs:
+            # Keep network_security if requested
+            if keep_network_security and graph_id == 'network_security':
+                continue
+            graphs_to_delete.append(graph_id)
+        
+        deleted_count = 0
+        for graph_id in graphs_to_delete:
+            try:
+                neo4j_service.delete_graph(graph_id)
+                deleted_count += 1
+            except Exception as e:
+                logger.warning(f"Could not delete graph {graph_id}: {e}")
+        
+        remaining = neo4j_service.list_graphs()
+        
+        return {
+            "message": f"Cleanup complete. Deleted {deleted_count} old graphs.",
+            "deleted_count": deleted_count,
+            "deleted_graphs": graphs_to_delete[:10],  # Show first 10
+            "remaining_graphs": remaining,
+            "remaining_count": len(remaining)
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error during cleanup: {e}")
+        raise HTTPException(status_code=500, detail=f"Error during cleanup: {str(e)}")
+
+
+@router.delete("/network/reset")
+async def reset_all_graphs():
+    """
+    Complete reset - delete ALL graphs including network_security.
+    
+    Use this to start completely fresh.
+    """
+    try:
+        all_graphs = neo4j_service.list_graphs()
+        
+        deleted_count = 0
+        for graph_id in all_graphs:
+            try:
+                neo4j_service.delete_graph(graph_id)
+                deleted_count += 1
+            except Exception as e:
+                logger.warning(f"Could not delete graph {graph_id}: {e}")
+        
+        return {
+            "message": f"Reset complete. Deleted {deleted_count} graphs.",
+            "deleted_count": deleted_count,
+            "status": "All graphs deleted. Upload a CSV to start fresh."
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error during reset: {e}")
+        raise HTTPException(status_code=500, detail=f"Error during reset: {str(e)}")

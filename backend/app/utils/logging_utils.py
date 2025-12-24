@@ -48,5 +48,12 @@ def setup_logging():
     logging.getLogger('uvicorn').setLevel(logging.INFO)
     logging.getLogger('neo4j').setLevel(logging.WARNING)
     
+    # Suppress noisy library loggers
+    logging.getLogger('python_multipart').setLevel(logging.WARNING)
+    logging.getLogger('multipart').setLevel(logging.WARNING)
+    logging.getLogger('httpcore').setLevel(logging.WARNING)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+    
     # Log startup information
     logging.info(f"Logging initialized with level: {settings.log_level.upper()}")
